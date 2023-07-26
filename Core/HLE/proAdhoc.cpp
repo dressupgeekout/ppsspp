@@ -1894,15 +1894,15 @@ static std::vector<std::pair<uint32_t, uint32_t>> InitPrivateIPRanges() {
 	ip_ranges.reserve(5);
 
 	if (1 == inet_pton(AF_INET, "192.168.0.0", &(saNet.sin_addr)) && 1 == inet_pton(AF_INET, "255.255.0.0", &(saMask.sin_addr)))
-		ip_ranges.push_back({saNet.sin_addr.s_addr, saMask.sin_addr.s_addr});
+		ip_ranges.push_back({(uint32_t)saNet.sin_addr.s_addr, (uint32_t)saMask.sin_addr.s_addr});
 	if (1 == inet_pton(AF_INET, "172.16.0.0", &(saNet.sin_addr)) && 1 == inet_pton(AF_INET, "255.240.0.0", &(saMask.sin_addr)))
-		ip_ranges.push_back({ saNet.sin_addr.s_addr, saMask.sin_addr.s_addr });
+		ip_ranges.push_back({ (uint32_t)saNet.sin_addr.s_addr, (uint32_t)saMask.sin_addr.s_addr });
 	if (1 == inet_pton(AF_INET, "10.0.0.0", &(saNet.sin_addr)) && 1 == inet_pton(AF_INET, "255.0.0.0", &(saMask.sin_addr)))
-		ip_ranges.push_back({ saNet.sin_addr.s_addr, saMask.sin_addr.s_addr });
+		ip_ranges.push_back({ (uint32_t)saNet.sin_addr.s_addr, (uint32_t)saMask.sin_addr.s_addr });
 	if (1 == inet_pton(AF_INET, "127.0.0.0", &(saNet.sin_addr)) && 1 == inet_pton(AF_INET, "255.0.0.0", &(saMask.sin_addr)))
-		ip_ranges.push_back({ saNet.sin_addr.s_addr, saMask.sin_addr.s_addr });
+		ip_ranges.push_back({ (uint32_t)saNet.sin_addr.s_addr, (uint32_t)saMask.sin_addr.s_addr });
 	if (1 == inet_pton(AF_INET, "169.254.0.0", &(saNet.sin_addr)) && 1 == inet_pton(AF_INET, "255.255.0.0", &(saMask.sin_addr)))
-		ip_ranges.push_back({ saNet.sin_addr.s_addr, saMask.sin_addr.s_addr });
+		ip_ranges.push_back({ (uint32_t)saNet.sin_addr.s_addr, (uint32_t)saMask.sin_addr.s_addr });
 
 	return ip_ranges;
 }

@@ -1,0 +1,17 @@
+#!/bin/sh
+
+set -ex
+
+export PKG_CONFIG_PATH=${PKG_CONFIG_PATH}:/usr/pkg/lib/ffmpeg3/pkgconfig
+
+cmake ../ \
+  -DUSE_DISCORD=OFF \
+  -DUSE_SYSTEM_FFMPEG=ON \
+  -DUSE_SYSTEM_LIBPNG=ON \
+  -DUSE_SYSTEM_LIBSDL2=ON \
+  -DUSE_SYSTEM_LIBZIP=ON \
+  -DUSE_SYSTEM_MINIUPNPC=ON \
+  -DUSE_SYSTEM_SNAPPY=ON \
+  -DUSE_SYSTEM_ZSTD=ON \
+  -DPYTHON_EXECUTABLE=/usr/pkg/bin/python3.10
+
