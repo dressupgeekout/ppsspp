@@ -350,6 +350,7 @@ if(NOT MSVC)
 		add_definitions(-Wno-nullability-completeness)
 		add_definitions(-Wno-tautological-pointer-compare)
 		add_definitions(-Wno-deprecated-register)
+		add_definitions(-Wno-c++11-narrowing)
 	endif()
 
 	if(USE_ASAN)
