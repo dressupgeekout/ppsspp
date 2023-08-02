@@ -218,6 +218,11 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 			mips->r[inst->dest] = (mips->r[inst->dest] & destMask) | (mem >> shift);
 			break;
 		}
+		case IROp::Load32Linked:
+			if (inst->dest != MIPS_REG_ZERO)
+				mips->r[inst->dest] = Memory::ReadUnchecked_U32(mips->r[inst->src1] + inst->constant);
+			mips->llBit = 1;
+			break;
 		case IROp::LoadFloat:
 			mips->f[inst->dest] = Memory::ReadUnchecked_Float(mips->r[inst->src1] + inst->constant);
 			break;
@@ -251,6 +256,16 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 			Memory::WriteUnchecked_U32(result, addr & 0xfffffffc);
 			break;
 		}
+		case IROp::Store32Conditional:
+			if (mips->llBit) {
+				Memory::WriteUnchecked_U32(mips->r[inst->src3], mips->r[inst->src1] + inst->constant);
+				if (inst->dest != MIPS_REG_ZERO) {
+					mips->r[inst->dest] = 1;
+				}
+			} else if (inst->dest != MIPS_REG_ZERO) {
+				mips->r[inst->dest] = 0;
+			}
+			break;
 		case IROp::StoreFloat:
 			Memory::WriteUnchecked_Float(mips->f[inst->src3], mips->r[inst->src1] + inst->constant);
 			break;
@@ -768,12 +783,28 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 			mips->f[inst->dest] = mips->f[inst->src1] / mips->f[inst->src2];
 			break;
 		case IROp::FMin:
-			// TODO: This doesn't handle VFPU ordering right.
-			mips->f[inst->dest] = std::min(mips->f[inst->src1], mips->f[inst->src2]);
+			if (my_isnan(mips->f[inst->src1]) || my_isnan(mips->f[inst->src2])) {
+				// See interpreter for this logic: this is for vmin, we're comparing mantissa+exp.
+				if (mips->fi[inst->src1] < 0 && mips->fi[inst->src2] < 0) {
+					mips->fi[inst->dest] = std::max(mips->fi[inst->src1], mips->fi[inst->src2]);
+				} else {
+					mips->fi[inst->dest] = std::min(mips->fi[inst->src1], mips->fi[inst->src2]);
+				}
+			} else {
+				mips->f[inst->dest] = std::min(mips->f[inst->src1], mips->f[inst->src2]);
+			}
 			break;
 		case IROp::FMax:
-			// TODO: This doesn't handle VFPU ordering right.
-			mips->f[inst->dest] = std::max(mips->f[inst->src1], mips->f[inst->src2]);
+			if (my_isnan(mips->f[inst->src1]) || my_isnan(mips->f[inst->src2])) {
+				// See interpreter for this logic: this is for vmax, we're comparing mantissa+exp.
+				if (mips->fi[inst->src1] < 0 && mips->fi[inst->src2] < 0) {
+					mips->fi[inst->dest] = std::min(mips->fi[inst->src1], mips->fi[inst->src2]);
+				} else {
+					mips->fi[inst->dest] = std::max(mips->fi[inst->src1], mips->fi[inst->src2]);
+				}
+			} else {
+				mips->f[inst->dest] = std::max(mips->f[inst->src1], mips->f[inst->src2]);
+			}
 			break;
 
 		case IROp::FMov:

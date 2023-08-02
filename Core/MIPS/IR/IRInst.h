@@ -92,6 +92,7 @@ enum class IROp : u8 {
 	Load32,
 	Load32Left,
 	Load32Right,
+	Load32Linked,
 	LoadFloat,
 	LoadVec4,
 
@@ -100,6 +101,7 @@ enum class IROp : u8 {
 	Store32,
 	Store32Left,
 	Store32Right,
+	Store32Conditional,
 	StoreFloat,
 	StoreVec4,
 
@@ -313,6 +315,7 @@ enum : IRReg {
 	IRREG_HI = 243,
 	IRREG_FCR31 = 244,
 	IRREG_FPCOND = 245,
+	IRREG_LLBIT = 250,
 };
 
 enum IRFlags {

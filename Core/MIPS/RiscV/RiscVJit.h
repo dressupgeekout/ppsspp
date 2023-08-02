@@ -28,6 +28,23 @@
 
 namespace MIPSComp {
 
+class RiscVJit;
+
+class RiscVBlockCacheDebugInterface : public JitBlockCacheDebugInterface {
+public:
+	RiscVBlockCacheDebugInterface(IRBlockCache &irBlocks, RiscVJit &jit);
+	int GetNumBlocks() const;
+	int GetBlockNumberFromStartAddress(u32 em_address, bool realBlocksOnly = true) const;
+	JitBlockDebugInfo GetBlockDebugInfo(int blockNum) const;
+	void ComputeStats(BlockCacheStats &bcStats) const;
+
+private:
+	void GetBlockCodeRange(int blockNum, int *startOffset, int *size) const;
+
+	IRBlockCache &irBlocks_;
+	RiscVJit &jit_;
+};
+
 class RiscVJit : public RiscVGen::RiscVCodeBlock, public IRJit {
 public:
 	RiscVJit(MIPSState *mipsState);
@@ -43,10 +60,10 @@ public:
 
 	void ClearCache() override;
 
-	// TODO: GetBlockCacheDebugInterface, block linking?
+	JitBlockCacheDebugInterface *GetBlockCacheDebugInterface() override;
 
 protected:
-	bool CompileBlock(u32 em_address, std::vector<IRInst> &instructions, u32 &mipsBytes, bool preload) override;
+	bool CompileTargetBlock(IRBlock *block, int block_num, bool preload) override;
 
 	void CompileIRInst(IRInst inst);
 
@@ -71,6 +88,7 @@ private:
 	void CompIR_Breakpoint(IRInst inst);
 	void CompIR_Compare(IRInst inst);
 	void CompIR_CondAssign(IRInst inst);
+	void CompIR_CondStore(IRInst inst);
 	void CompIR_Div(IRInst inst);
 	void CompIR_Exit(IRInst inst);
 	void CompIR_ExitIf(IRInst inst);
@@ -86,6 +104,7 @@ private:
 	void CompIR_FStore(IRInst inst);
 	void CompIR_Generic(IRInst inst);
 	void CompIR_HiLo(IRInst inst);
+	void CompIR_Interpret(IRInst inst);
 	void CompIR_Load(IRInst inst);
 	void CompIR_LoadShift(IRInst inst);
 	void CompIR_Logic(IRInst inst);
@@ -114,8 +133,7 @@ private:
 
 	RiscVRegCache gpr;
 	RiscVRegCacheFPU fpr;
-
-	static constexpr int MAX_ALLOWED_JIT_BLOCKS = 262144;
+	RiscVBlockCacheDebugInterface debugInterface_;
 
 	const u8 *enterDispatcher_ = nullptr;
 
@@ -134,7 +152,6 @@ private:
 	const u8 *crashHandler_ = nullptr;
 
 	int jitStartOffset_ = 0;
-	const u8 **blockStartAddrs_ = nullptr;
 };
 
 } // namespace MIPSComp

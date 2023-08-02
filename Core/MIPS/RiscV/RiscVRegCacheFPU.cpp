@@ -20,12 +20,11 @@
 #endif
 
 #include "Common/CPUDetect.h"
+#include "Core/MIPS/IR/IRInst.h"
+#include "Core/MIPS/IR/IRAnalysis.h"
 #include "Core/MIPS/RiscV/RiscVRegCacheFPU.h"
 #include "Core/MIPS/JitCommon/JitState.h"
 #include "Core/Reporting.h"
-
-using namespace RiscVGen;
-using namespace RiscVJitConstants;
 
 using namespace RiscVGen;
 using namespace RiscVJitConstants;
@@ -37,7 +36,7 @@ void RiscVRegCacheFPU::Init(RiscVEmitter *emitter) {
 	emit_ = emitter;
 }
 
-void RiscVRegCacheFPU::Start() {
+void RiscVRegCacheFPU::Start(MIPSComp::IRBlock *irBlock) {
 	if (!initialReady_) {
 		SetupInitialRegs();
 		initialReady_ = true;
@@ -46,6 +45,9 @@ void RiscVRegCacheFPU::Start() {
 	memcpy(ar, arInitial_, sizeof(ar));
 	memcpy(mr, mrInitial_, sizeof(mr));
 	pendingFlush_ = false;
+
+	irBlock_ = irBlock;
+	irIndex_ = 0;
 }
 
 void RiscVRegCacheFPU::SetupInitialRegs() {
@@ -133,8 +135,6 @@ allocate:
 	}
 
 	// Still nothing. Let's spill a reg and goto 10.
-	// TODO: Use age or something to choose which register to spill?
-	// TODO: Spill dirty regs first? or opposite?
 	bool clobbered;
 	RiscVReg bestToSpill = FindBestToSpill(true, &clobbered);
 	if (bestToSpill == INVALID_REG) {
@@ -163,21 +163,33 @@ RiscVReg RiscVRegCacheFPU::FindBestToSpill(bool unusedOnly, bool *clobbered) {
 
 	static const int UNUSED_LOOKAHEAD_OPS = 30;
 
+	IRSituation info;
+	info.lookaheadCount = UNUSED_LOOKAHEAD_OPS;
+	info.currentIndex = irIndex_;
+	info.instructions = irBlock_->GetInstructions();
+	info.numInstructions = irBlock_->GetNumInstructions();
+
 	*clobbered = false;
 	for (int i = 0; i < allocCount; i++) {
 		RiscVReg reg = allocOrder[i];
 		if (ar[reg - F0].mipsReg != IRREG_INVALID && mr[ar[reg - F0].mipsReg].spillLock)
 			continue;
 
-		// TODO: Look for clobbering in the IRInst array with index?
+		// As it's in alloc-order, we know it's not static so we don't need to check for that.
+		IRUsage usage = IRNextFPRUsage(ar[reg - F0].mipsReg, info);
 
-		// Not awesome.  A used reg.  Let's try to avoid spilling.
-		// TODO: Actually check if we'd be spilling.
-		if (unusedOnly) {
-			continue;
+		// Awesome, a clobbered reg.  Let's use it.
+		if (usage == IRUsage::CLOBBERED) {
+			*clobbered = true;
+			return reg;
 		}
 
-		return reg;
+		// Not awesome.  A used reg.  Let's try to avoid spilling.
+		if (!unusedOnly || usage == IRUsage::UNUSED) {
+			// TODO: Use age or something to choose which register to spill?
+			// TODO: Spill dirty regs first? or opposite?
+			return reg;
+		}
 	}
 
 	return INVALID_REG;
@@ -187,8 +199,7 @@ void RiscVRegCacheFPU::MapInIn(IRRegIndex rd, IRRegIndex rs) {
 	SpillLock(rd, rs);
 	MapReg(rd);
 	MapReg(rs);
-	ReleaseSpillLock(rd);
-	ReleaseSpillLock(rs);
+	ReleaseSpillLock(rd, rs);
 }
 
 void RiscVRegCacheFPU::MapDirtyIn(IRRegIndex rd, IRRegIndex rs, bool avoidLoad) {
@@ -196,8 +207,7 @@ void RiscVRegCacheFPU::MapDirtyIn(IRRegIndex rd, IRRegIndex rs, bool avoidLoad) 
 	bool load = !avoidLoad || rd == rs;
 	MapReg(rd, load ? MIPSMap::DIRTY : MIPSMap::NOINIT);
 	MapReg(rs);
-	ReleaseSpillLock(rd);
-	ReleaseSpillLock(rs);
+	ReleaseSpillLock(rd, rs);
 }
 
 void RiscVRegCacheFPU::MapDirtyInIn(IRRegIndex rd, IRRegIndex rs, IRRegIndex rt, bool avoidLoad) {
@@ -206,9 +216,17 @@ void RiscVRegCacheFPU::MapDirtyInIn(IRRegIndex rd, IRRegIndex rs, IRRegIndex rt,
 	MapReg(rd, load ? MIPSMap::DIRTY : MIPSMap::NOINIT);
 	MapReg(rt);
 	MapReg(rs);
-	ReleaseSpillLock(rd);
-	ReleaseSpillLock(rs);
-	ReleaseSpillLock(rt);
+	ReleaseSpillLock(rd, rs, rt);
+}
+
+RiscVReg RiscVRegCacheFPU::MapDirtyInTemp(IRRegIndex rd, IRRegIndex rs, bool avoidLoad) {
+	SpillLock(rd, rs);
+	bool load = !avoidLoad || rd == rs;
+	MapReg(rd, load ? MIPSMap::DIRTY : MIPSMap::NOINIT);
+	MapReg(rs);
+	RiscVReg temp = AllocateReg();
+	ReleaseSpillLock(rd, rs);
+	return temp;
 }
 
 void RiscVRegCacheFPU::Map4DirtyIn(IRRegIndex rdbase, IRRegIndex rsbase, bool avoidLoad) {
@@ -276,6 +294,24 @@ RiscVReg RiscVRegCacheFPU::RiscVRegForFlush(IRRegIndex r) {
 	default:
 		_assert_(false);
 		return INVALID_REG;
+	}
+}
+
+void RiscVRegCacheFPU::FlushBeforeCall() {
+	// Note: don't set this false at the end, since we don't flush everything.
+	if (!pendingFlush_) {
+		return;
+	}
+
+	// These registers are not preserved by function calls.
+	for (int i = 0; i <= 7; ++i) {
+		FlushRiscVReg(RiscVReg(F0 + i));
+	}
+	for (int i = 10; i <= 17; ++i) {
+		FlushRiscVReg(RiscVReg(F0 + i));
+	}
+	for (int i = 28; i <= 31; ++i) {
+		FlushRiscVReg(RiscVReg(F0 + i));
 	}
 }
 

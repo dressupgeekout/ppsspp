@@ -192,7 +192,11 @@ RetroAchievementsLeaderboardScreen::~RetroAchievementsLeaderboardScreen() {
 
 RetroAchievementsLeaderboardScreen::RetroAchievementsLeaderboardScreen(const Path &gamePath, int leaderboardID)
 	: TabbedUIDialogScreenWithGameBackground(gamePath), leaderboardID_(leaderboardID) {
-	rc_client_begin_fetch_leaderboard_entries(Achievements::GetClient(), leaderboardID_, 0, 20, [](int result, const char *error_message, rc_client_leaderboard_entry_list_t *list, rc_client_t *client, void *userdata) {
+	FetchEntries();
+}
+
+void RetroAchievementsLeaderboardScreen::FetchEntries() {
+	auto callback = [](int result, const char *error_message, rc_client_leaderboard_entry_list_t *list, rc_client_t *client, void *userdata) {
 		if (result != RC_OK) {
 			g_OSD.Show(OSDType::MESSAGE_ERROR, error_message, 10.0f);
 			return;
@@ -201,7 +205,13 @@ RetroAchievementsLeaderboardScreen::RetroAchievementsLeaderboardScreen(const Pat
 		RetroAchievementsLeaderboardScreen *thiz = (RetroAchievementsLeaderboardScreen *)userdata;
 		thiz->pendingEntryList_ = list;
 		thiz->pendingAsyncCall_ = nullptr;
-	}, this);
+	};
+
+	if (nearMe_) {
+		rc_client_begin_fetch_leaderboard_entries_around_user(Achievements::GetClient(), leaderboardID_, 10, callback, this);
+	} else {
+		rc_client_begin_fetch_leaderboard_entries(Achievements::GetClient(), leaderboardID_, 0, 25, callback, this);
+	}
 }
 
 void RetroAchievementsLeaderboardScreen::CreateTabs() {
@@ -212,6 +222,17 @@ void RetroAchievementsLeaderboardScreen::CreateTabs() {
 	UI::LinearLayout *layout = AddTab("AchievementsLeaderboard", leaderboard->title);
 	layout->Add(new TextView(leaderboard->description));
 	layout->Add(new ItemHeader(ac->T("Leaderboard")));
+
+	auto strip = layout->Add(new ChoiceStrip(ORIENT_HORIZONTAL));
+	strip->AddChoice(ac->T("Top players"));
+	strip->AddChoice(ac->T("Around me"));
+	strip->OnChoice.Add([=](UI::EventParams &e) {
+		strip->SetSelection(e.a, false);
+		nearMe_ = e.a != 0;
+		FetchEntries();
+		return UI::EVENT_DONE;
+	});
+	strip->SetSelection(nearMe_ ? 1 : 0, false);
 
 	if (entryList_) {
 		for (uint32_t i = 0; i < entryList_->num_entries; i++) {
@@ -275,7 +296,7 @@ void RetroAchievementsSettingsScreen::CreateAccountTab(UI::ViewGroup *viewGroup)
 	using namespace UI;
 
 	if (!g_Config.bAchievementsEnable) {
-		viewGroup->Add(new TextView(ac->T("Achievements are disabled")));
+		viewGroup->Add(new NoticeView(NoticeLevel::INFO, ac->T("Achievements are disabled"), "", new LinearLayoutParams(Margins(5))));
 	} else if (Achievements::IsLoggedIn()) {
 		const rc_client_user_t *info = rc_client_get_user_info(Achievements::GetClient());
 
@@ -283,7 +304,7 @@ void RetroAchievementsSettingsScreen::CreateAccountTab(UI::ViewGroup *viewGroup)
 		if (strcmp(info->display_name, info->username) != 0) {
 			viewGroup->Add(new InfoItem(ac->T("Name"), info->display_name));
 		}
-		viewGroup->Add(new InfoItem(ac->T("Username"), info->username));
+		viewGroup->Add(new InfoItem(di->T("Username"), info->username));
 		// viewGroup->Add(new InfoItem(ac->T("Unread messages"), info.numUnreadMessages));
 		viewGroup->Add(new Choice(di->T("Log out")))->OnClick.Add([=](UI::EventParams &) -> UI::EventReturn {
 			Achievements::Logout();
@@ -304,8 +325,8 @@ void RetroAchievementsSettingsScreen::CreateAccountTab(UI::ViewGroup *viewGroup)
 				return UI::EVENT_DONE;
 			});
 		} else if (System_GetPropertyBool(SYSPROP_HAS_LOGIN_DIALOG)) {
-			viewGroup->Add(new Choice(ac->T("Log in")))->OnClick.Add([=](UI::EventParams &) -> UI::EventReturn {
-				System_AskUsernamePassword(ac->T("Log in"), [](const std::string &value, int) {
+			viewGroup->Add(new Choice(di->T("Log in")))->OnClick.Add([=](UI::EventParams &) -> UI::EventReturn {
+				System_AskUsernamePassword(di->T("Log in"), [](const std::string &value, int) {
 					std::vector<std::string> parts;
 					SplitString(value, '\n', parts);
 					if (parts.size() == 2 && !parts[0].empty() && !parts[1].empty()) {
@@ -363,16 +384,27 @@ void RetroAchievementsSettingsScreen::CreateCustomizeTab(UI::ViewGroup *viewGrou
 	auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
 
 	using namespace UI;
-	viewGroup->Add(new ItemHeader(ac->T("Sound effects")));
+	viewGroup->Add(new ItemHeader(ac->T("Sound Effects")));
 	viewGroup->Add(new AudioFileChooser(&g_Config.sAchievementsUnlockAudioFile, ac->T("Achievement unlocked"), UISound::ACHIEVEMENT_UNLOCKED));
 	viewGroup->Add(new AudioFileChooser(&g_Config.sAchievementsLeaderboardSubmitAudioFile, ac->T("Leaderboard score submission"), UISound::LEADERBOARD_SUBMITTED));
+
+	static const char *positions[] = { "Bottom Left", "Bottom Center", "Bottom Right", "Top Left", "Top Center", "Top Right", "Center Left", "Center Right", "None" };
+
+	viewGroup->Add(new ItemHeader(ac->T("Notifications")));
+	viewGroup->Add(new PopupMultiChoice(&g_Config.iAchievementsLeaderboardStartedOrFailedPos, ac->T("Leaderboard attempt started or failed"), positions, 0, ARRAY_SIZE(positions), I18NCat::DIALOG, screenManager()))->SetEnabledPtr(&g_Config.bAchievementsEnable);
+	viewGroup->Add(new PopupMultiChoice(&g_Config.iAchievementsLeaderboardSubmittedPos, ac->T("Leaderboard result submitted"), positions, 0, ARRAY_SIZE(positions), I18NCat::DIALOG, screenManager()))->SetEnabledPtr(&g_Config.bAchievementsEnable);
+	viewGroup->Add(new PopupMultiChoice(&g_Config.iAchievementsLeaderboardTrackerPos, ac->T("Leaderboard tracker"), positions, 0, ARRAY_SIZE(positions), I18NCat::DIALOG, screenManager()))->SetEnabledPtr(&g_Config.bAchievementsEnable);
+	viewGroup->Add(new PopupMultiChoice(&g_Config.iAchievementsUnlockedPos, ac->T("Achievement unlocked"), positions, 0, ARRAY_SIZE(positions), I18NCat::DIALOG, screenManager()))->SetEnabledPtr(&g_Config.bAchievementsEnable);
+	viewGroup->Add(new PopupMultiChoice(&g_Config.iAchievementsChallengePos, ac->T("Challenge indicator"), positions, 0, ARRAY_SIZE(positions), I18NCat::DIALOG, screenManager()))->SetEnabledPtr(&g_Config.bAchievementsEnable);
+	viewGroup->Add(new PopupMultiChoice(&g_Config.iAchievementsProgressPos, ac->T("Achievement progress"), positions, 0, ARRAY_SIZE(positions), I18NCat::DIALOG, screenManager()))->SetEnabledPtr(&g_Config.bAchievementsEnable);
 }
 
 void RetroAchievementsSettingsScreen::CreateDeveloperToolsTab(UI::ViewGroup *viewGroup) {
 	auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
+	auto di = GetI18NCategory(I18NCat::DIALOG);
 
 	using namespace UI;
-	viewGroup->Add(new ItemHeader(ac->T("Settings")));
+	viewGroup->Add(new ItemHeader(di->T("Settings")));
 	viewGroup->Add(new CheckBox(&g_Config.bAchievementsUnofficial, ac->T("Unofficial achievements")))->SetEnabledPtr(&g_Config.bAchievementsEnable);
 	viewGroup->Add(new CheckBox(&g_Config.bAchievementsLogBadMemReads, ac->T("Log bad memory accesses")))->SetEnabledPtr(&g_Config.bAchievementsEnable);
 }
@@ -608,11 +640,14 @@ void RenderLeaderboardSummary(UIContext &dc, const rc_client_leaderboard_t *lead
 	dc.RebindTexture();
 }
 
-void RenderLeaderboardEntry(UIContext &dc, const rc_client_leaderboard_entry_t *entry, const Bounds &bounds, float alpha, bool hasFocus) {
+void RenderLeaderboardEntry(UIContext &dc, const rc_client_leaderboard_entry_t *entry, const Bounds &bounds, float alpha, bool hasFocus, bool isCurrentUser) {
 	using namespace UI;
 	UI::Drawable background = dc.theme->itemStyle.background;
 	if (hasFocus) {
 		background = dc.theme->itemFocusedStyle.background;
+	}
+	if (isCurrentUser) {
+		background = dc.theme->itemDownStyle.background;
 	}
 
 	background.color = alphaMul(background.color, alpha);
@@ -675,14 +710,14 @@ void AchievementView::Click() {
 #ifdef _DEBUG
 	static int type = 0;
 	type++;
-	type = type % 4;
+	type = type % 5;
 	switch (type) {
 	case 0: g_OSD.ShowAchievementUnlocked(achievement_->id); break;
-	case 1: g_OSD.ShowAchievementProgress(achievement_->id, 2.0f); break;
-	case 2: g_OSD.ShowChallengeIndicator(achievement_->id, true); break;
-	case 3: g_OSD.ShowChallengeIndicator(achievement_->id, false); break;
+	case 1: g_OSD.ShowAchievementProgress(achievement_->id, true); break;
+	case 2: g_OSD.ShowAchievementProgress(achievement_->id, false); break;
+	case 3: g_OSD.ShowChallengeIndicator(achievement_->id, true); break;
+	case 4: g_OSD.ShowChallengeIndicator(achievement_->id, false); break;
 	}
-
 #endif
 }
 
@@ -704,7 +739,7 @@ void LeaderboardSummaryView::GetContentDimensions(const UIContext &dc, float &w,
 }
 
 void LeaderboardEntryView::Draw(UIContext &dc) {
-	RenderLeaderboardEntry(dc, entry_, bounds_, 1.0f, HasFocus());
+	RenderLeaderboardEntry(dc, entry_, bounds_, 1.0f, HasFocus(), isCurrentUser_);
 }
 
 void LeaderboardEntryView::GetContentDimensions(const UIContext &dc, float &w, float &h) const {

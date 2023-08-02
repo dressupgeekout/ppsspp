@@ -46,8 +46,10 @@ public:
 	~RiscVRegCacheFPU() {}
 
 	void Init(RiscVGen::RiscVEmitter *emitter);
-	// TODO: Maybe pass in IR block and start PC for logging/debugging?
-	void Start();
+	void Start(MIPSComp::IRBlock *irBlock);
+	void SetIRIndex(int index) {
+		irIndex_ = index;
+	}
 
 	// Protect the RISC-V register containing a MIPS register from spilling, to ensure that
 	// it's being kept allocated.
@@ -64,11 +66,13 @@ public:
 	void MapInIn(IRRegIndex rd, IRRegIndex rs);
 	void MapDirtyIn(IRRegIndex rd, IRRegIndex rs, bool avoidLoad = true);
 	void MapDirtyInIn(IRRegIndex rd, IRRegIndex rs, IRRegIndex rt, bool avoidLoad = true);
-	void Map4Dirty(IRRegIndex rdbase, bool avoidLoad = true);
+	RiscVGen::RiscVReg MapDirtyInTemp(IRRegIndex rd, IRRegIndex rs, bool avoidLoad = true);
 	void Map4DirtyIn(IRRegIndex rdbase, IRRegIndex rsbase, bool avoidLoad = true);
 	void Map4DirtyInIn(IRRegIndex rdbase, IRRegIndex rsbase, IRRegIndex rtbase, bool avoidLoad = true);
+	void FlushBeforeCall();
 	void FlushAll();
 	void FlushR(IRRegIndex r);
+	void FlushRiscVReg(RiscVGen::RiscVReg r);
 	void DiscardR(IRRegIndex r);
 
 	RiscVGen::RiscVReg R(int preg); // Returns a cached register
@@ -78,7 +82,6 @@ private:
 	RiscVGen::RiscVReg AllocateReg();
 	RiscVGen::RiscVReg FindBestToSpill(bool unusedOnly, bool *clobbered);
 	RiscVGen::RiscVReg RiscVRegForFlush(IRRegIndex r);
-	void FlushRiscVReg(RiscVGen::RiscVReg r);
 	int GetMipsRegOffset(IRRegIndex r);
 
 	bool IsValidReg(IRRegIndex r) const;
@@ -88,6 +91,8 @@ private:
 	MIPSState *mips_;
 	RiscVGen::RiscVEmitter *emit_ = nullptr;
 	MIPSComp::JitOptions *jo_;
+	MIPSComp::IRBlock *irBlock_ = nullptr;
+	int irIndex_ = 0;
 
 	enum {
 		// On RiscV, each of the 32 registers are full 128-bit. No sharing of components!

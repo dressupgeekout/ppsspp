@@ -20,6 +20,8 @@
 #endif
 
 #include "Common/CPUDetect.h"
+#include "Core/MIPS/IR/IRInst.h"
+#include "Core/MIPS/IR/IRAnalysis.h"
 #include "Core/MIPS/RiscV/RiscVRegCache.h"
 #include "Core/MIPS/JitCommon/JitState.h"
 #include "Core/Reporting.h"
@@ -35,7 +37,7 @@ void RiscVRegCache::Init(RiscVEmitter *emitter) {
 	emit_ = emitter;
 }
 
-void RiscVRegCache::Start() {
+void RiscVRegCache::Start(MIPSComp::IRBlock *irBlock) {
 	if (!initialReady_) {
 		SetupInitialRegs();
 		initialReady_ = true;
@@ -55,6 +57,9 @@ void RiscVRegCache::Start() {
 		mr[statics[i].mr].isStatic = true;
 		mr[statics[i].mr].spillLock = true;
 	}
+
+	irBlock_ = irBlock;
+	irIndex_ = 0;
 }
 
 void RiscVRegCache::SetupInitialRegs() {
@@ -361,8 +366,6 @@ allocate:
 	}
 
 	// Still nothing. Let's spill a reg and goto 10.
-	// TODO: Use age or something to choose which register to spill?
-	// TODO: Spill dirty regs first? or opposite?
 	bool clobbered;
 	RiscVReg bestToSpill = FindBestToSpill(true, &clobbered);
 	if (bestToSpill == INVALID_REG) {
@@ -391,6 +394,12 @@ RiscVReg RiscVRegCache::FindBestToSpill(bool unusedOnly, bool *clobbered) {
 
 	static const int UNUSED_LOOKAHEAD_OPS = 30;
 
+	IRSituation info;
+	info.lookaheadCount = UNUSED_LOOKAHEAD_OPS;
+	info.currentIndex = irIndex_;
+	info.instructions = irBlock_->GetInstructions();
+	info.numInstructions = irBlock_->GetNumInstructions();
+
 	*clobbered = false;
 	for (int i = 0; i < allocCount; i++) {
 		RiscVReg reg = allocOrder[i];
@@ -400,16 +409,24 @@ RiscVReg RiscVRegCache::FindBestToSpill(bool unusedOnly, bool *clobbered) {
 			continue;
 
 		// As it's in alloc-order, we know it's not static so we don't need to check for that.
+		IRUsage usage = IRNextGPRUsage(ar[reg].mipsReg, info);
 
-		// TODO: Look for clobbering in the IRInst array with index?
-
-		// Not awesome.  A used reg.  Let's try to avoid spilling.
-		// TODO: Actually check if we'd be spilling.
-		if (unusedOnly) {
-			continue;
+		// Awesome, a clobbered reg.  Let's use it.
+		if (usage == IRUsage::CLOBBERED) {
+			// TODO: Check HI/LO clobber together if we combine.
+			bool canClobber = true;
+			if (canClobber) {
+				*clobbered = true;
+				return reg;
+			}
 		}
 
-		return reg;
+		// Not awesome.  A used reg.  Let's try to avoid spilling.
+		if (!unusedOnly || usage == IRUsage::UNUSED) {
+			// TODO: Use age or something to choose which register to spill?
+			// TODO: Spill dirty regs first? or opposite?
+			return reg;
+		}
 	}
 
 	return INVALID_REG;
@@ -662,7 +679,6 @@ void RiscVRegCache::MapDirtyDirtyInIn(IRRegIndex rd1, IRRegIndex rd2, IRRegIndex
 void RiscVRegCache::FlushRiscVReg(RiscVReg r) {
 	_dbg_assert_(r > X0 && r <= X31);
 	_dbg_assert_(ar[r].mipsReg != MIPS_REG_ZERO);
-	_dbg_assert_(!mr[ar[r].mipsReg].isStatic);
 	if (r == INVALID_REG) {
 		ERROR_LOG(JIT, "FlushRiscVReg called on invalid register %d", r);
 		return;
@@ -672,6 +688,7 @@ void RiscVRegCache::FlushRiscVReg(RiscVReg r) {
 		_dbg_assert_(!ar[r].isDirty);
 		return;
 	}
+	_dbg_assert_(!mr[ar[r].mipsReg].isStatic);
 	if (mr[ar[r].mipsReg].isStatic) {
 		ERROR_LOG(JIT, "Cannot FlushRiscVReg a statically mapped register");
 		return;
@@ -998,7 +1015,7 @@ bool RiscVRegCache::IsValidReg(IRRegIndex r) const {
 	if (r >= 224 && r < 224 + 16)
 		return false;
 	// Don't allow nextPC, etc. since it's probably a mistake.
-	if (r > 245)
+	if (r > IRREG_FPCOND && r != IRREG_LLBIT)
 		return false;
 	// Don't allow PC either.
 	if (r == 241)

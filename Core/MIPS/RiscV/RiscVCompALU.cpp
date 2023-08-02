@@ -39,7 +39,7 @@ void RiscVJit::CompIR_Arith(IRInst inst) {
 	CONDITIONAL_DISABLE;
 
 	bool allowPtrMath = true;
-#ifndef MASKED_PSP_MEMORY
+#ifdef MASKED_PSP_MEMORY
 	// Since we modify it, we can't safely.
 	allowPtrMath = false;
 #endif
@@ -254,7 +254,13 @@ void RiscVJit::CompIR_Bits(IRInst inst) {
 		break;
 
 	case IROp::Clz:
-		CompIR_Generic(inst);
+		if (cpu_info.RiscV_Zbb) {
+			gpr.MapDirtyIn(inst.dest, inst.src1, MapType::AVOID_LOAD_MARK_NORM32);
+			// This even sets to 32 when zero, perfect.
+			CLZW(gpr.R(inst.dest), gpr.R(inst.src1));
+		} else {
+			CompIR_Generic(inst);
+		}
 		break;
 
 	default:
@@ -368,21 +374,27 @@ void RiscVJit::CompIR_Compare(IRInst inst) {
 	RiscVReg rhs = INVALID_REG;
 	switch (inst.op) {
 	case IROp::Slt:
-		// Not using the NORM32 flag so we don't confuse ourselves on overlap.
-		gpr.MapDirtyInIn(inst.dest, inst.src1, inst.src2);
+		gpr.SpillLock(inst.dest, inst.src1, inst.src2);
+		gpr.MapReg(inst.src1);
+		gpr.MapReg(inst.src2);
 		NormalizeSrc12(inst, &lhs, &rhs, SCRATCH1, SCRATCH2, true);
+		gpr.MapReg(inst.dest, MIPSMap::NOINIT | MIPSMap::MARK_NORM32);
+		gpr.ReleaseSpillLock(inst.dest, inst.src1, inst.src2);
+
 		SLT(gpr.R(inst.dest), lhs, rhs);
-		gpr.MarkDirty(gpr.R(inst.dest), true);
 		break;
 
 	case IROp::SltConst:
-		// Not using the NORM32 flag so we don't confuse ourselves on overlap.
-		gpr.MapDirtyIn(inst.dest, inst.src1);
 		if (inst.constant == 0) {
 			// Basically, getting the sign bit.  Let's shift instead.
+			gpr.MapDirtyIn(inst.dest, inst.src1, MapType::AVOID_LOAD_MARK_NORM32);
 			SRLIW(gpr.R(inst.dest), gpr.R(inst.src1), 31);
 		} else {
+			gpr.SpillLock(inst.dest, inst.src1);
+			gpr.MapReg(inst.src1);
 			NormalizeSrc1(inst, &lhs, SCRATCH1, false);
+			gpr.MapReg(inst.dest, MIPSMap::NOINIT | MIPSMap::MARK_NORM32);
+			gpr.ReleaseSpillLock(inst.dest, inst.src1);
 
 			if ((int32_t)inst.constant >= -2048 && (int32_t)inst.constant <= 2047) {
 				SLTI(gpr.R(inst.dest), lhs, (int32_t)inst.constant);
@@ -390,26 +402,31 @@ void RiscVJit::CompIR_Compare(IRInst inst) {
 				LI(SCRATCH2, (int32_t)inst.constant);
 				SLT(gpr.R(inst.dest), lhs, SCRATCH2);
 			}
+			gpr.MarkDirty(gpr.R(inst.dest), true);
 		}
-		gpr.MarkDirty(gpr.R(inst.dest), true);
 		break;
 
 	case IROp::SltU:
-		// Not using the NORM32 flag so we don't confuse ourselves on overlap.
-		gpr.MapDirtyInIn(inst.dest, inst.src1, inst.src2);
+		gpr.SpillLock(inst.dest, inst.src1, inst.src2);
+		gpr.MapReg(inst.src1);
+		gpr.MapReg(inst.src2);
 		// It's still fine to sign extend, the biggest just get even bigger.
 		NormalizeSrc12(inst, &lhs, &rhs, SCRATCH1, SCRATCH2, true);
+		gpr.MapReg(inst.dest, MIPSMap::NOINIT | MIPSMap::MARK_NORM32);
+		gpr.ReleaseSpillLock(inst.dest, inst.src1, inst.src2);
+
 		SLTU(gpr.R(inst.dest), lhs, rhs);
-		gpr.MarkDirty(gpr.R(inst.dest), true);
 		break;
 
 	case IROp::SltUConst:
-		// Not using the NORM32 flag so we don't confuse ourselves on overlap.
-		gpr.MapDirtyIn(inst.dest, inst.src1);
 		if (inst.constant == 0) {
 			gpr.SetImm(inst.dest, 0);
 		} else {
+			gpr.SpillLock(inst.dest, inst.src1);
+			gpr.MapReg(inst.src1);
 			NormalizeSrc1(inst, &lhs, SCRATCH1, false);
+			gpr.MapReg(inst.dest, MIPSMap::NOINIT | MIPSMap::MARK_NORM32);
+			gpr.ReleaseSpillLock(inst.dest, inst.src1);
 
 			// We sign extend because we're comparing against something normalized.
 			// It's also the most efficient to set.
@@ -419,8 +436,6 @@ void RiscVJit::CompIR_Compare(IRInst inst) {
 				LI(SCRATCH2, (int32_t)inst.constant);
 				SLTU(gpr.R(inst.dest), lhs, SCRATCH2);
 			}
-
-			gpr.MarkDirty(gpr.R(inst.dest), true);
 		}
 		break;
 
@@ -640,10 +655,53 @@ void RiscVJit::CompIR_Mult(IRInst inst) {
 void RiscVJit::CompIR_Div(IRInst inst) {
 	CONDITIONAL_DISABLE;
 
+	RiscVReg numReg, denomReg;
 	switch (inst.op) {
 	case IROp::Div:
+		gpr.MapDirtyDirtyInIn(IRREG_LO, IRREG_HI, inst.src1, inst.src2, MapType::AVOID_LOAD_MARK_NORM32);
+		// We have to do this because of the divide by zero and overflow checks below.
+		NormalizeSrc12(inst, &numReg, &denomReg, SCRATCH1, SCRATCH2, true);
+		DIVW(gpr.R(IRREG_LO), numReg, denomReg);
+		REMW(gpr.R(IRREG_HI), numReg, denomReg);
+
+		// Now some tweaks for divide by zero and overflow.
+		{
+			// Start with divide by zero, remainder is fine.
+			FixupBranch skipNonZero = BNE(denomReg, R_ZERO);
+			FixupBranch keepNegOne = BGE(numReg, R_ZERO);
+			LI(gpr.R(IRREG_LO), 1);
+			SetJumpTarget(keepNegOne);
+			SetJumpTarget(skipNonZero);
+
+			// For overflow, RISC-V sets LO right, but remainder to zero.
+			// Cheating a bit by using R_RA as a temp...
+			LI(R_RA, (int32_t)0x80000000);
+			FixupBranch notMostNegative = BNE(numReg, R_RA);
+			LI(R_RA, -1);
+			FixupBranch notNegativeOne = BNE(denomReg, R_RA);
+			LI(gpr.R(IRREG_HI), -1);
+			SetJumpTarget(notNegativeOne);
+			SetJumpTarget(notMostNegative);
+		}
+		break;
+
 	case IROp::DivU:
-		CompIR_Generic(inst);
+		gpr.MapDirtyDirtyInIn(IRREG_LO, IRREG_HI, inst.src1, inst.src2, MapType::AVOID_LOAD_MARK_NORM32);
+		// We have to do this because of the divide by zero check below.
+		NormalizeSrc12(inst, &numReg, &denomReg, SCRATCH1, SCRATCH2, true);
+		DIVUW(gpr.R(IRREG_LO), numReg, denomReg);
+		REMUW(gpr.R(IRREG_HI), numReg, denomReg);
+
+		// On divide by zero, everything is correct already except the 0xFFFF case.
+		{
+			FixupBranch skipNonZero = BNE(denomReg, R_ZERO);
+			// Luckily, we don't need SCRATCH2/denomReg anymore.
+			LI(SCRATCH2, 0xFFFF);
+			FixupBranch keepNegOne = BLTU(SCRATCH2, numReg);
+			MV(gpr.R(IRREG_LO), SCRATCH2);
+			SetJumpTarget(keepNegOne);
+			SetJumpTarget(skipNonZero);
+		}
 		break;
 
 	default:
