@@ -253,10 +253,6 @@ public:
 
 	// These aren't saved, just for instant debugging.
 	bool bLogFrameDrops;
-	bool bShowDebugStats;
-	bool bShowAudioDebug;
-	bool bShowControlDebug;
-	bool bShowGpuProfile;
 
 	// Analog stick tilting
 	// This is the held base angle (from the horizon), that we compute the tilt relative from.
@@ -465,16 +461,18 @@ public:
 	bool bDisplayStatusBar;
 	bool bShowBottomTabTitles;
 	bool bShowDeveloperMenu;
-	bool bShowAllocatorDebug;
+
 	// Double edged sword: much easier debugging, but not accurate.
 	bool bSkipDeadbeefFilling;
+
 	bool bFuncHashMap;
 	std::string sSkipFuncHashMap;
 	bool bDebugMemInfoDetailed;
-	bool bDrawFrameGraph;
 
 	// Volatile development settings
-	bool bShowFrameProfiler;
+	// Overlays
+	int iDebugOverlay;
+
 	bool bGpuLogProfiler; // Controls the Vulkan logging profiler (profiles textures uploads etc).
 
 	// Retro Achievement settings

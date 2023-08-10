@@ -400,6 +400,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/MIPS/IR/IRCompVFPU.cpp \
   $(SRC)/Core/MIPS/IR/IRInst.cpp \
   $(SRC)/Core/MIPS/IR/IRInterpreter.cpp \
+  $(SRC)/Core/MIPS/IR/IRNativeCommon.cpp \
   $(SRC)/Core/MIPS/IR/IRPassSimplify.cpp \
   $(SRC)/Core/MIPS/IR/IRRegCache.cpp \
   $(SRC)/GPU/Math3D.cpp \
@@ -763,6 +764,7 @@ LOCAL_SRC_FILES := \
   $(SRC)/UI/BackgroundAudio.cpp \
   $(SRC)/UI/DiscordIntegration.cpp \
   $(SRC)/UI/ChatScreen.cpp \
+  $(SRC)/UI/DebugOverlay.cpp \
   $(SRC)/UI/DevScreens.cpp \
   $(SRC)/UI/DisplayLayoutScreen.cpp \
   $(SRC)/UI/EmuScreen.cpp \

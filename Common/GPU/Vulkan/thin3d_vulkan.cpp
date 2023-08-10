@@ -487,6 +487,10 @@ public:
 		return frameCount_;
 	}
 
+	FrameTimeData GetFrameTimeData(int framesBack) const override {
+		return renderManager_.GetFrameTimeData(framesBack);
+	}
+
 	void FlushState() override {}
 
 	void ResetStats() override {
@@ -513,7 +517,7 @@ public:
 	VkDescriptorSet GetOrCreateDescriptorSet(VkBuffer buffer);
 
 	std::vector<std::string> GetFeatureList() const override;
-	std::vector<std::string> GetExtensionList() const override;
+	std::vector<std::string> GetExtensionList(bool device, bool enabledOnly) const override;
 
 	uint64_t GetNativeObject(NativeObject obj, void *srcObject) override;
 
@@ -525,6 +529,10 @@ public:
 
 	void SetInvalidationCallback(InvalidationCallback callback) override {
 		renderManager_.SetInvalidationCallback(callback);
+	}
+
+	std::string GetGpuProfileString() const override {
+		return renderManager_.GetGpuProfileString();
 	}
 
 private:
@@ -863,6 +871,7 @@ VKContext::VKContext(VulkanContext *vulkan, bool useRenderThread)
 
 	VkFormat depthStencilFormat = vulkan->GetDeviceInfo().preferredDepthStencilFormat;
 
+	caps_.setMaxFrameLatencySupported = true;
 	caps_.anisoSupported = vulkan->GetDeviceFeatures().enabled.standard.samplerAnisotropy != 0;
 	caps_.geometryShaderSupported = vulkan->GetDeviceFeatures().enabled.standard.geometryShader != 0;
 	caps_.tesselationShaderSupported = vulkan->GetDeviceFeatures().enabled.standard.tessellationShader != 0;
@@ -888,6 +897,7 @@ VKContext::VKContext(VulkanContext *vulkan, bool useRenderThread)
 	caps_.logicOpSupported = vulkan->GetDeviceFeatures().enabled.standard.logicOp != 0;
 	caps_.multiViewSupported = vulkan->GetDeviceFeatures().enabled.multiview.multiview != 0;
 	caps_.sampleRateShadingSupported = vulkan->GetDeviceFeatures().enabled.standard.sampleRateShading != 0;
+	caps_.textureSwizzleSupported = true;
 
 	const auto &limits = vulkan->GetPhysicalDeviceProperties().properties.limits;
 
@@ -1622,10 +1632,16 @@ std::vector<std::string> VKContext::GetFeatureList() const {
 	return features;
 }
 
-std::vector<std::string> VKContext::GetExtensionList() const {
+std::vector<std::string> VKContext::GetExtensionList(bool device, bool enabledOnly) const {
 	std::vector<std::string> extensions;
-	for (auto &iter : vulkan_->GetDeviceExtensionsAvailable()) {
-		extensions.push_back(iter.extensionName);
+	if (enabledOnly) {
+		for (auto &iter : (device ? vulkan_->GetDeviceExtensionsEnabled() : vulkan_->GetInstanceExtensionsEnabled())) {
+			extensions.push_back(iter);
+		}
+	} else {
+		for (auto &iter : (device ? vulkan_->GetDeviceExtensionsAvailable() : vulkan_->GetInstanceExtensionsAvailable())) {
+			extensions.push_back(iter.extensionName);
+		}
 	}
 	return extensions;
 }

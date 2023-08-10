@@ -492,6 +492,10 @@ public:
 		renderManager_.SetInvalidationCallback(callback);
 	}
 
+	std::string GetGpuProfileString() const override {
+		return renderManager_.GetGpuProfileString();
+	}
+
 private:
 	void ApplySamplers();
 
@@ -571,6 +575,7 @@ OpenGLContext::OpenGLContext() {
 		caps_.textureDepthSupported = true;
 	}
 
+	caps_.setMaxFrameLatencySupported = true;
 	caps_.dualSourceBlend = gl_extensions.ARB_blend_func_extended || gl_extensions.EXT_blend_func_extended;
 	caps_.anisoSupported = gl_extensions.EXT_texture_filter_anisotropic;
 	caps_.framebufferCopySupported = gl_extensions.OES_copy_image || gl_extensions.NV_copy_image || gl_extensions.EXT_copy_image || gl_extensions.ARB_copy_image;

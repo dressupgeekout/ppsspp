@@ -80,6 +80,10 @@ void Core_NotifyWindowHidden(bool hidden) {
 	// TODO: Wait until we can react?
 }
 
+bool Core_IsWindowHidden() {
+	return windowHidden;
+}
+
 void Core_NotifyActivity() {
 	lastActivity = time_now_d();
 }
@@ -162,20 +166,19 @@ static bool IsWindowSmall(int pixelWidth, int pixelHeight) {
 // TODO: Feels like this belongs elsewhere.
 bool UpdateScreenScale(int width, int height) {
 	bool smallWindow;
-#if defined(USING_QT_UI)
-	g_display.dpi = System_GetPropertyFloat(SYSPROP_DISPLAY_DPI);
+
 	float g_logical_dpi = System_GetPropertyFloat(SYSPROP_DISPLAY_LOGICAL_DPI);
+	g_display.dpi = System_GetPropertyFloat(SYSPROP_DISPLAY_DPI);
+
+	if (g_display.dpi < 0.0f) {
+		g_display.dpi = 96.0f;
+	}
+	if (g_logical_dpi < 0.0f) {
+		g_logical_dpi = 96.0f;
+	}
+
 	g_display.dpi_scale_x = g_logical_dpi / g_display.dpi;
 	g_display.dpi_scale_y = g_logical_dpi / g_display.dpi;
-#elif PPSSPP_PLATFORM(WINDOWS) && !PPSSPP_PLATFORM(UWP)
-	g_display.dpi = System_GetPropertyFloat(SYSPROP_DISPLAY_DPI);
-	g_display.dpi_scale_x = 96.0f / g_display.dpi;
-	g_display.dpi_scale_y = 96.0f / g_display.dpi;
-#else
-	g_display.dpi = 96.0f;
-	g_display.dpi_scale_x = 1.0f;
-	g_display.dpi_scale_y = 1.0f;
-#endif
 	g_display.dpi_scale_real_x = g_display.dpi_scale_x;
 	g_display.dpi_scale_real_y = g_display.dpi_scale_y;
 
@@ -211,8 +214,7 @@ void UpdateRunLoop() {
 		sleep_ms(16);
 		return;
 	}
-	NativeUpdate();
-	NativeRender(graphicsContext);
+	NativeFrame(graphicsContext);
 }
 
 void KeepScreenAwake() {
@@ -326,7 +328,7 @@ void Core_ProcessStepping() {
 }
 
 // Many platforms, like Android, do not call this function but handle things on their own.
-// Instead they simply call NativeRender and NativeUpdate directly.
+// Instead they simply call NativeFrame directly.
 bool Core_Run(GraphicsContext *ctx) {
 	System_Notify(SystemNotification::DISASSEMBLY);
 	while (true) {

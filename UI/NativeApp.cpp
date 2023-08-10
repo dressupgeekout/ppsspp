@@ -151,6 +151,8 @@
 
 #include <Core/HLE/Plugins.h>
 
+void HandleGlobalMessage(const std::string &msg, const std::string &value);
+
 ScreenManager *g_screenManager;
 std::string config_filename;
 
@@ -1047,14 +1049,43 @@ void RenderOverlays(UIContext *dc, void *userdata) {
 	}
 }
 
-void NativeRender(GraphicsContext *graphicsContext) {
+void NativeFrame(GraphicsContext *graphicsContext) {
+	PROFILE_END_FRAME();
+
+	std::vector<PendingMessage> toProcess;
+	{
+		std::lock_guard<std::mutex> lock(pendingMutex);
+		toProcess = std::move(pendingMessages);
+		pendingMessages.clear();
+	}
+
+	for (const auto &item : toProcess) {
+		HandleGlobalMessage(item.msg, item.value);
+		g_screenManager->sendMessage(item.msg.c_str(), item.value.c_str());
+	}
+
+	g_requestManager.ProcessRequests();
+
+	// it's ok to call this redundantly with DoFrame from EmuScreen
+	Achievements::Idle();
+
+	g_DownloadManager.Update();
+	g_screenManager->update();
+
+	g_Discord.Update();
+	g_BackgroundAudio.Play();
+
+	g_OSD.Update();
+
+	UI::SetSoundEnabled(g_Config.bUISound);
+
 	_dbg_assert_(graphicsContext != nullptr);
 	_dbg_assert_(g_screenManager != nullptr);
 
 	g_GameManager.Update();
 
 	if (GetUIState() != UISTATE_INGAME) {
-		// Note: We do this from NativeRender so that the graphics context is
+		// Note: We do this from NativeFrame so that the graphics context is
 		// guaranteed valid, to be safe - g_gameInfoCache messes around with textures.
 		g_BackgroundAudio.Update();
 	}
@@ -1098,7 +1129,7 @@ void NativeRender(GraphicsContext *graphicsContext) {
 	g_screenManager->getUIContext()->SetTintSaturation(g_Config.fUITint, g_Config.fUISaturation);
 
 	Draw::DebugFlags debugFlags = Draw::DebugFlags::NONE;
-	if (g_Config.bShowGpuProfile)
+	if ((DebugOverlay)g_Config.iDebugOverlay == DebugOverlay::GPU_PROFILE)
 		debugFlags |= Draw::DebugFlags::PROFILE_TIMESTAMPS;
 	if (g_Config.bGpuLogProfiler)
 		debugFlags |= Draw::DebugFlags::PROFILE_SCOPES;
@@ -1204,37 +1235,6 @@ void HandleGlobalMessage(const std::string &msg, const std::string &value) {
 		// Assume that the user may have modified things.
 		MemoryStick_NotifyWrite();
 	}
-}
-
-void NativeUpdate() {
-	PROFILE_END_FRAME();
-
-	std::vector<PendingMessage> toProcess;
-	{
-		std::lock_guard<std::mutex> lock(pendingMutex);
-		toProcess = std::move(pendingMessages);
-		pendingMessages.clear();
-	}
-
-	for (const auto &item : toProcess) {
-		HandleGlobalMessage(item.msg, item.value);
-		g_screenManager->sendMessage(item.msg.c_str(), item.value.c_str());
-	}
-
-	g_requestManager.ProcessRequests();
-
-	// it's ok to call this redundantly with DoFrame from EmuScreen
-	Achievements::Idle();
-
-	g_DownloadManager.Update();
-	g_screenManager->update();
-
-	g_Discord.Update();
-	g_BackgroundAudio.Play();
-
-	g_OSD.Update();
-
-	UI::SetSoundEnabled(g_Config.bUISound);
 }
 
 bool NativeIsAtTopLevel() {

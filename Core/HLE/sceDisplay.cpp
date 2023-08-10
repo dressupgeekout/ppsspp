@@ -496,7 +496,7 @@ static void DoFrameIdleTiming() {
 #endif
 		}
 
-		if (g_Config.bDrawFrameGraph || coreCollectDebugStats) {
+		if ((DebugOverlay)g_Config.iDebugOverlay == DebugOverlay::FRAME_GRAPH || coreCollectDebugStats) {
 			DisplayNotifySleep(time_now_d() - before);
 		}
 	}
@@ -662,7 +662,7 @@ void __DisplayFlip(int cyclesLate) {
 		CoreTiming::ScheduleEvent(0 - cyclesLate, afterFlipEvent, 0);
 		numVBlanksSinceFlip = 0;
 
-		if (g_Config.bDrawFrameGraph || coreCollectDebugStats) {
+		if ((DebugOverlay)g_Config.iDebugOverlay == DebugOverlay::FRAME_GRAPH || coreCollectDebugStats) {
 			// Track how long we sleep (whether vsync or sleep_ms.)
 			DisplayNotifySleep(time_now_d() - frameSleepStart, frameSleepPos);
 		}
@@ -718,6 +718,8 @@ void hleLagSync(u64 userdata, int cyclesLate) {
 #ifndef _WIN32
 		const double left = goal - now;
 		usleep((long)(left * 1000000.0));
+#else
+		yield();
 #endif
 		now = time_now_d();
 	}
@@ -726,7 +728,7 @@ void hleLagSync(u64 userdata, int cyclesLate) {
 	const int over = (int)((now - goal) * 1000000);
 	ScheduleLagSync(over - emuOver);
 
-	if (g_Config.bDrawFrameGraph || coreCollectDebugStats) {
+	if ((DebugOverlay)g_Config.iDebugOverlay == DebugOverlay::FRAME_GRAPH || coreCollectDebugStats) {
 		DisplayNotifySleep(now - before);
 	}
 }

@@ -756,6 +756,8 @@ add_library(Common STATIC
 	Common/Render/Text/draw_text.h
 	Common/Render/Text/draw_text_android.cpp
 	Common/Render/Text/draw_text_android.h
+	Common/Render/Text/draw_text_sdl.cpp
+	Common/Render/Text/draw_text_sdl.h
 	Common/Render/Text/draw_text_win.cpp
 	Common/Render/Text/draw_text_win.h
 	Common/Render/Text/draw_text_uwp.cpp
@@ -1325,7 +1327,7 @@ else()
 			SDL/SDLVulkanGraphicsContext.cpp
 		)
 	endif()
-	if(SDL2_TTF_FOUND)
+	if(SDL2_ttf_FOUND)
 		add_definitions(-DUSE_SDL2_TTF)
 		set(nativeExtraLibs ${nativeExtraLibs} SDL2_ttf::SDL2_ttf)
 
@@ -1395,6 +1397,8 @@ list(APPEND NativeAppSource
 	UI/BackgroundAudio.cpp
 	UI/ChatScreen.h
 	UI/ChatScreen.cpp
+	UI/DebugOverlay.cpp
+	UI/DebugOverlay.h
 	UI/DevScreens.cpp
 	UI/DevScreens.h
 	UI/DisplayLayoutScreen.cpp
@@ -1475,8 +1479,6 @@ add_library(native STATIC
 	${nativeExtra}
 	Common/Render/Text/draw_text_qt.cpp
 	Common/Render/Text/draw_text_qt.h
-	Common/Render/Text/draw_text_sdl.cpp
-	Common/Render/Text/draw_text_sdl.h
 	ext/jpge/jpgd.cpp
 	ext/jpge/jpgd.h
 	ext/jpge/jpge.cpp
@@ -1560,6 +1562,8 @@ set(CoreExtra ${CoreExtra}
 	Core/MIPS/IR/IRInterpreter.h
 	Core/MIPS/IR/IRJit.cpp
 	Core/MIPS/IR/IRJit.h
+	Core/MIPS/IR/IRNativeCommon.cpp
+	Core/MIPS/IR/IRNativeCommon.h
 	Core/MIPS/IR/IRPassSimplify.cpp
 	Core/MIPS/IR/IRPassSimplify.h
 	Core/MIPS/IR/IRRegCache.cpp

@@ -603,6 +603,8 @@ struct DeviceCaps {
 	bool multiViewSupported;
 	bool isTilingGPU;  // This means that it benefits from correct store-ops, msaa without backing memory, etc.
 	bool sampleRateShadingSupported;
+	bool setMaxFrameLatencySupported;
+	bool textureSwizzleSupported;
 
 	bool verySlowShaderCompiler;
 
@@ -691,7 +693,7 @@ public:
 	virtual const DeviceCaps &GetDeviceCaps() const = 0;
 	virtual uint32_t GetDataFormatSupport(DataFormat fmt) const = 0;
 	virtual std::vector<std::string> GetFeatureList() const { return std::vector<std::string>(); }
-	virtual std::vector<std::string> GetExtensionList() const { return std::vector<std::string>(); }
+	virtual std::vector<std::string> GetExtensionList(bool device, bool enabledOnly) const { return std::vector<std::string>(); }
 	virtual std::vector<std::string> GetDeviceList() const { return std::vector<std::string>(); }
 
 	virtual PresentationMode GetPresentationMode() const = 0;
@@ -843,6 +845,14 @@ public:
 
 	// Total amount of frames rendered. Unaffected by game pause, so more robust than gpuStats.numFlips
 	virtual int GetFrameCount() = 0;
+
+	virtual FrameTimeData GetFrameTimeData(int framesBack) const {
+		return FrameTimeData{};
+	}
+
+	virtual std::string GetGpuProfileString() const {
+		return "";
+	}
 
 protected:
 	ShaderModule *vsPresets_[VS_MAX_PRESET];
