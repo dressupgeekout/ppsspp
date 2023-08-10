@@ -1163,7 +1163,7 @@ namespace Libretro
    {
       ctx->SetRenderTarget();
       if (ctx->GetDrawContext())
-         ctx->GetDrawContext()->BeginFrame();
+         ctx->GetDrawContext()->BeginFrame(Draw::DebugFlags::NONE);
 
       gpu->BeginHostFrame();
 
@@ -1172,8 +1172,10 @@ namespace Libretro
 
       gpu->EndHostFrame();
 
-      if (ctx->GetDrawContext())
+      if (ctx->GetDrawContext()) {
          ctx->GetDrawContext()->EndFrame();
+         ctx->GetDrawContext()->Present();
+      }
    }
 
    static void EmuThreadFunc()

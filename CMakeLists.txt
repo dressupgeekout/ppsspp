@@ -420,11 +420,9 @@ if(NOT MSVC)
 		endif()
 		add_definitions(-D_XOPEN_SOURCE=700)
 		add_definitions(-D_XOPEN_SOURCE_EXTENDED -D__BSD_VISIBLE=1 -D_BSD_SOURCE -D_DEFAULT_SOURCE)
+		add_definitions(-D_LARGEFILE64_SOURCE=1 -D_FILE_OFFSET_BITS=64)
 		if(${CMAKE_SYSTEM_NAME} STREQUAL "NetBSD")
 			add_definitions(-D_NETBSD_SOURCE)
-		endif()
-		if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "NetBSD")
-			add_definitions(-D_LARGEFILE64_SOURCE=1 -D_FILE_OFFSET_BITS=64)
 		endif()
 	elseif(ANDROID)
 		add_definitions(-fsigned-char)
@@ -1188,15 +1186,6 @@ set(nativeExtra)
 set(nativeExtraLibs)
 
 if(ANDROID)
-	set(nativeExtra ${nativeExtra}
-		Common/GL/GLInterface/EGLAndroid.cpp
-		Common/GL/GLInterface/EGLAndroid.h
-		Common/GL/GLInterface/EGL.cpp
-		Common/GL/GLInterface/EGL.h
-		Common/GL/GLInterface/GLInterface.cpp
-		Common/GL/GLInterfaceBase.h
-	)
-
 	set(NativeAppSource ${NativeAppSource}
 		android/jni/app-android.cpp
 		android/jni/AndroidJavaGLContext.cpp
