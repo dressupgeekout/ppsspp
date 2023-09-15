@@ -25,13 +25,12 @@
 #include "Core/MIPS/JitCommon/JitState.h"
 #include "Core/MIPS/JitCommon/JitCommon.h"
 #include "Core/MIPS/RiscV/RiscVRegCache.h"
-#include "Core/MIPS/RiscV/RiscVRegCacheFPU.h"
 
 namespace MIPSComp {
 
 class RiscVJitBackend : public RiscVGen::RiscVCodeBlock, public IRNativeBackend {
 public:
-	RiscVJitBackend(MIPSState *mipsState, JitOptions &jo);
+	RiscVJitBackend(JitOptions &jo, IRBlockCache &blocks);
 	~RiscVJitBackend();
 
 	bool DescribeCodePtr(const u8 *ptr, std::string &name) const override;
@@ -39,6 +38,7 @@ public:
 	void GenerateFixedCode(MIPSState *mipsState) override;
 	bool CompileBlock(IRBlock *block, int block_num, bool preload) override;
 	void ClearAllBlocks() override;
+	void InvalidateBlock(IRBlock *block, int block_num) override;
 
 protected:
 	const CodeBlockCommon &CodeBlock() const override {
@@ -56,6 +56,9 @@ private:
 
 	// Note: destroys SCRATCH1.
 	void FlushAll();
+
+	void WriteConstExit(uint32_t pc);
+	void OverwriteExit(int srcOffset, int len, int block_num) override;
 
 	void CompIR_Arith(IRInst inst) override;
 	void CompIR_Assign(IRInst inst) override;
@@ -105,11 +108,10 @@ private:
 	int32_t AdjustForAddressOffset(RiscVGen::RiscVReg *reg, int32_t constant, int32_t range = 0);
 	void NormalizeSrc1(IRInst inst, RiscVGen::RiscVReg *reg, RiscVGen::RiscVReg tempReg, bool allowOverlap);
 	void NormalizeSrc12(IRInst inst, RiscVGen::RiscVReg *lhs, RiscVGen::RiscVReg *rhs, RiscVGen::RiscVReg lhsTempReg, RiscVGen::RiscVReg rhsTempReg, bool allowOverlap);
-	RiscVGen::RiscVReg NormalizeR(IRRegIndex rs, IRRegIndex rd, RiscVGen::RiscVReg tempReg);
+	RiscVGen::RiscVReg NormalizeR(IRReg rs, IRReg rd, RiscVGen::RiscVReg tempReg);
 
 	JitOptions &jo;
-	RiscVRegCache gpr;
-	RiscVRegCacheFPU fpr;
+	RiscVRegCache regs_;
 
 	const u8 *outerLoop_ = nullptr;
 	const u8 *outerLoopPCInSCRATCH1_ = nullptr;
@@ -122,12 +124,14 @@ private:
 	const u8 *loadStaticRegisters_ = nullptr;
 
 	int jitStartOffset_ = 0;
+	int compilingBlockNum_ = -1;
+	int logBlocks_ = 0;
 };
 
 class RiscVJit : public IRNativeJit {
 public:
 	RiscVJit(MIPSState *mipsState)
-		: IRNativeJit(mipsState), rvBackend_(mipsState, jo) {
+		: IRNativeJit(mipsState), rvBackend_(jo, blocks_) {
 		Init(rvBackend_);
 	}
 

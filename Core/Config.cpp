@@ -133,14 +133,23 @@ static int DefaultCpuCore() {
 #if PPSSPP_ARCH(ARM) || PPSSPP_ARCH(ARM64) || PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64) || PPSSPP_ARCH(RISCV64)
 	if (System_GetPropertyBool(SYSPROP_CAN_JIT))
 		return (int)CPUCore::JIT;
-	return (int)CPUCore::IR_JIT;
+	return (int)CPUCore::IR_INTERPRETER;
 #else
-	return (int)CPUCore::IR_JIT;
+	return (int)CPUCore::IR_INTERPRETER;
 #endif
 }
 
 static bool DefaultCodeGen() {
 #if PPSSPP_ARCH(ARM) || PPSSPP_ARCH(ARM64) || PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64) || PPSSPP_ARCH(RISCV64)
+	return true;
+#else
+	return false;
+#endif
+}
+
+static bool DefaultVSync() {
+#if PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(UWP)
+	// Previously we didn't allow turning off vsync/FIFO on Android. Let's set the default accordingly.
 	return true;
 #else
 	return false;
@@ -174,6 +183,7 @@ static const ConfigSetting generalSettings[] = {
 	ConfigSetting("DiscordPresence", &g_Config.bDiscordPresence, true, CfgFlag::DEFAULT),  // Or maybe it makes sense to have it per-game? Race conditions abound...
 	ConfigSetting("UISound", &g_Config.bUISound, false, CfgFlag::DEFAULT),
 
+	ConfigSetting("DisableHTTPS", &g_Config.bDisableHTTPS, false, CfgFlag::DONT_SAVE),
 	ConfigSetting("AutoLoadSaveState", &g_Config.iAutoLoadSaveState, 0, CfgFlag::PER_GAME),
 	ConfigSetting("EnableCheats", &g_Config.bEnableCheats, false, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("CwCheatRefreshRate", &g_Config.iCwCheatRefreshRate, 77, CfgFlag::PER_GAME),
@@ -385,6 +395,12 @@ static int DefaultGPUBackend() {
 	// unreliable to default to (with some exceptions, of course).
 #if PPSSPP_ARCH(64BIT)
 	if (System_GetPropertyInt(SYSPROP_SYSTEMVERSION) >= 27) {
+		return (int)GPUBackend::VULKAN;
+	}
+#else
+	// There are some newer devices that benefit from Vulkan as default, but are 32-bit. Example: Redmi 9A.
+	// Let's only allow the very newest generation though.
+	if (System_GetPropertyInt(SYSPROP_SYSTEMVERSION) >= 30) {
 		return (int)GPUBackend::VULKAN;
 	}
 #endif
@@ -603,7 +619,7 @@ static const ConfigSetting graphicsSettings[] = {
 	ConfigSetting("TexScalingType", &g_Config.iTexScalingType, 0, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("TexDeposterize", &g_Config.bTexDeposterize, false, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("TexHardwareScaling", &g_Config.bTexHardwareScaling, false, CfgFlag::PER_GAME | CfgFlag::REPORT),
-	ConfigSetting("VSyncInterval", &g_Config.bVSync, false, CfgFlag::PER_GAME),
+	ConfigSetting("VSync", &g_Config.bVSync, &DefaultVSync, CfgFlag::PER_GAME),
 	ConfigSetting("BloomHack", &g_Config.iBloomHack, 0, CfgFlag::PER_GAME | CfgFlag::REPORT),
 
 	// Not really a graphics setting...
@@ -624,6 +640,9 @@ static const ConfigSetting graphicsSettings[] = {
 
 	ConfigSetting("ShaderCache", &g_Config.bShaderCache, true, CfgFlag::DONT_SAVE),  // Doesn't save. Ini-only.
 	ConfigSetting("GpuLogProfiler", &g_Config.bGpuLogProfiler, false, CfgFlag::DEFAULT),
+
+	ConfigSetting("UberShaderVertex", &g_Config.bUberShaderVertex, true, CfgFlag::DEFAULT),
+	ConfigSetting("UberShaderFragment", &g_Config.bUberShaderFragment, true, CfgFlag::DEFAULT),
 };
 
 static const ConfigSetting soundSettings[] = {
@@ -785,6 +804,9 @@ static const ConfigSetting controlSettings[] = {
 
 	ConfigSetting("SystemControls", &g_Config.bSystemControls, true, CfgFlag::DEFAULT),
 	ConfigSetting("RapidFileInterval", &g_Config.iRapidFireInterval, 5, CfgFlag::DEFAULT),
+
+	ConfigSetting("AnalogGesture", &g_Config.bAnalogGesture, false, CfgFlag::PER_GAME),
+	ConfigSetting("AnalogGestureSensibility", &g_Config.fAnalogGestureSensibility, 1.0f, CfgFlag::PER_GAME),
 };
 
 static const ConfigSetting networkSettings[] = {
@@ -821,7 +843,7 @@ static const ConfigSetting systemParamSettings[] = {
 	ConfigSetting("ButtonPreference", &g_Config.iButtonPreference, PSP_SYSTEMPARAM_BUTTON_CROSS, CfgFlag::PER_GAME | CfgFlag::REPORT),
 	ConfigSetting("LockParentalLevel", &g_Config.iLockParentalLevel, 0, CfgFlag::PER_GAME),
 	ConfigSetting("WlanAdhocChannel", &g_Config.iWlanAdhocChannel, PSP_SYSTEMPARAM_ADHOC_CHANNEL_AUTOMATIC, CfgFlag::PER_GAME),
-#if defined(USING_WIN_UI) || defined(USING_QT_UI) || PPSSPP_PLATFORM(ANDROID)
+#if defined(USING_WIN_UI) || defined(USING_QT_UI) || PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(SWITCH)
 	ConfigSetting("BypassOSKWithKeyboard", &g_Config.bBypassOSKWithKeyboard, false, CfgFlag::PER_GAME),
 #endif
 	ConfigSetting("WlanPowerSave", &g_Config.bWlanPowerSave, (bool) PSP_SYSTEMPARAM_WLAN_POWERSAVE_OFF, CfgFlag::PER_GAME),
@@ -1185,11 +1207,6 @@ void Config::Load(const char *iniFileName, const char *controllerIniFilename) {
 
 	CleanRecent();
 
-#if PPSSPP_PLATFORM(ANDROID)
-	// The on path here is untested, since we don't expose it.
-	g_Config.bVSync = false;
-#endif
-
 	PostLoadCleanup(false);
 
 	INFO_LOG(LOADER, "Config loaded: '%s'", iniFilename_.c_str());
@@ -1213,7 +1230,7 @@ bool Config::Save(const char *saveReason) {
 		CleanRecent();
 		IniFile iniFile;
 		if (!iniFile.Load(iniFilename_)) {
-			ERROR_LOG(LOADER, "Error saving config - can't read ini '%s'", iniFilename_.c_str());
+			WARN_LOG(LOADER, "Likely saving config for first time - couldn't read ini '%s'", iniFilename_.c_str());
 		}
 
 		// Need to do this somewhere...
@@ -1300,9 +1317,9 @@ bool Config::Save(const char *saveReason) {
 
 void Config::PostLoadCleanup(bool gameSpecific) {
 	// Override ppsspp.ini JIT value to prevent crashing
-	jitForcedOff = DefaultCpuCore() != (int)CPUCore::JIT && g_Config.iCpuCore == (int)CPUCore::JIT;
+	jitForcedOff = DefaultCpuCore() != (int)CPUCore::JIT && (g_Config.iCpuCore == (int)CPUCore::JIT || g_Config.iCpuCore == (int)CPUCore::JIT_IR);
 	if (jitForcedOff) {
-		g_Config.iCpuCore = (int)CPUCore::IR_JIT;
+		g_Config.iCpuCore = (int)CPUCore::IR_INTERPRETER;
 	}
 
 	// This caps the exponent 4 (so 16x.)
@@ -1332,7 +1349,7 @@ void Config::PostLoadCleanup(bool gameSpecific) {
 void Config::PreSaveCleanup(bool gameSpecific) {
 	if (jitForcedOff) {
 		// If we forced jit off and it's still set to IR, change it back to jit.
-		if (g_Config.iCpuCore == (int)CPUCore::IR_JIT)
+		if (g_Config.iCpuCore == (int)CPUCore::IR_INTERPRETER)
 			g_Config.iCpuCore = (int)CPUCore::JIT;
 	}
 }
@@ -1341,12 +1358,12 @@ void Config::PostSaveCleanup(bool gameSpecific) {
 	if (jitForcedOff) {
 		// Force JIT off again just in case Config::Save() is called without exiting PPSSPP.
 		if (g_Config.iCpuCore == (int)CPUCore::JIT)
-			g_Config.iCpuCore = (int)CPUCore::IR_JIT;
+			g_Config.iCpuCore = (int)CPUCore::IR_INTERPRETER;
 	}
 }
 
 void Config::NotifyUpdatedCpuCore() {
-	if (jitForcedOff && g_Config.iCpuCore == (int)CPUCore::IR_JIT) {
+	if (jitForcedOff && g_Config.iCpuCore == (int)CPUCore::IR_INTERPRETER) {
 		// No longer forced off, the user set it to IR jit.
 		jitForcedOff = false;
 	}

@@ -175,12 +175,9 @@ public:
 protected:
 	void CreateViews() override;
 	void update() override;
-	//virtual void sendMessage(const char *message, const char *value);
 
 private:
 	UI::EventReturn OnGameSelected(UI::EventParams &e);
-	UI::EventReturn OnGameSelectedInstant(UI::EventParams &e);
-
 	UI::EventReturn OnGameSettings(UI::EventParams &e);
 };
 

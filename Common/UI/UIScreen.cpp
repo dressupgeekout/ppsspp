@@ -11,6 +11,7 @@
 #include "Common/Data/Text/I18n.h"
 #include "Common/Render/DrawBuffer.h"
 #include "Common/Log.h"
+#include <Common/System/Request.h>
 
 static const bool ClickDebug = false;
 
@@ -80,7 +81,7 @@ bool UIScreen::key(const KeyInput &key) {
 	}
 }
 
-void UIScreen::UnsyncTouch(const TouchInput &touch) {
+bool UIScreen::UnsyncTouch(const TouchInput &touch) {
 	if (ClickDebug && root_ && (touch.flags & TOUCH_DOWN)) {
 		INFO_LOG(SYSTEM, "Touch down!");
 		std::vector<UI::View *> views;
@@ -90,18 +91,19 @@ void UIScreen::UnsyncTouch(const TouchInput &touch) {
 		}
 	}
 
-	std::lock_guard<std::mutex> guard(eventQueueLock_);
 	QueuedEvent ev{};
 	ev.type = QueuedEventType::TOUCH;
 	ev.touch = touch;
+	std::lock_guard<std::mutex> guard(eventQueueLock_);
 	eventQueue_.push_back(ev);
+	return false;
 }
 
 void UIScreen::UnsyncAxis(const AxisInput &axis) {
-	std::lock_guard<std::mutex> guard(eventQueueLock_);
 	QueuedEvent ev{};
 	ev.type = QueuedEventType::AXIS;
 	ev.axis = axis;
+	std::lock_guard<std::mutex> guard(eventQueueLock_);
 	eventQueue_.push_back(ev);
 }
 
@@ -121,10 +123,10 @@ bool UIScreen::UnsyncKey(const KeyInput &key) {
 		}
 	}
 
-	std::lock_guard<std::mutex> guard(eventQueueLock_);
 	QueuedEvent ev{};
 	ev.type = QueuedEventType::KEY;
 	ev.key = key;
+	std::lock_guard<std::mutex> guard(eventQueueLock_);
 	eventQueue_.push_back(ev);
 	return retval;
 }
@@ -389,6 +391,10 @@ void PopupScreen::TriggerFinish(DialogResult result) {
 
 		OnCompleted(result);
 	}
+#if PPSSPP_PLATFORM(UWP)
+	// Inform UI that popup close to hide OSK (if visible)
+	System_NotifyUIState("popup_closed");
+#endif
 }
 
 void PopupScreen::CreateViews() {

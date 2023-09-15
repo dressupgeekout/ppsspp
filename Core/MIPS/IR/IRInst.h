@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <vector>
 #include <utility>
 
@@ -16,7 +17,7 @@
 // even be directly JIT-ed, but the gains will probably be tiny over our older direct
 // MIPS->target JITs.
 
-enum class IROp : u8 {
+enum class IROp : uint8_t {
 	Nop,
 
 	SetConst,
@@ -138,12 +139,12 @@ enum class IROp : u8 {
 	FSat0_1,
 	FSatMinus1_1,
 
+	FpCondFromReg,
 	FpCondToReg,
 	FpCtrlFromReg,
 	FpCtrlToReg,
 	VfpuCtrlToReg,
 
-	ZeroFpCond,
 	FCmp,
 
 	FCmovVfpuCC,
@@ -252,6 +253,13 @@ enum class Vec4Init {
 	Set_0001,
 };
 
+enum class IRRoundMode : uint8_t {
+	RINT_0 = 0,
+	CAST_1 = 1,
+	CEIL_2 = 2,
+	FLOOR_3 = 3,
+};
+
 // Hm, unused
 inline IRComparison Invert(IRComparison comp) {
 	switch (comp) {
@@ -326,6 +334,8 @@ enum IRFlags {
 	IRFLAG_SRC3DST = 0x0002,
 	// Exit instruction (maybe conditional.)
 	IRFLAG_EXIT = 0x0004,
+	// Instruction like Interpret which may read anything, but not an exit.
+	IRFLAG_BARRIER = 0x0008,
 };
 
 struct IRMeta {
@@ -363,6 +373,10 @@ public:
 	}
 
 	void Write(IROp op, u8 dst = 0, u8 src1 = 0, u8 src2 = 0);
+	void Write(IROp op, IRReg dst, IRReg src1, IRReg src2, uint32_t c) {
+		AddConstant(c);
+		Write(op, dst, src1, src2);
+	}
 	void Write(IRInst inst) {
 		insts_.push_back(inst);
 	}
@@ -371,6 +385,9 @@ public:
 	int AddConstant(u32 value);
 	int AddConstantFloat(float value);
 
+	void Reserve(size_t s) {
+		insts_.reserve(s);
+	}
 	void Clear() {
 		insts_.clear();
 	}
@@ -385,6 +402,9 @@ private:
 struct IROptions {
 	uint32_t disableFlags;
 	bool unalignedLoadStore;
+	bool unalignedLoadStoreVec4;
+	bool preferVec4;
+	bool preferVec4Dot;
 };
 
 const IRMeta *GetIRMeta(IROp op);

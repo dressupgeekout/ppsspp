@@ -39,17 +39,13 @@ AudioFileChooser::AudioFileChooser(std::string *value, const std::string &title,
 		return UI::EVENT_DONE;
 	});
 	Add(new FileChooserChoice(value, title, BrowseFileType::SOUND_EFFECT, new LinearLayoutParams(1.0f)))->OnChange.Add([=](UI::EventParams &e) {
-		// TODO: Check the file format here.
-		// Need to forward the event out.
 		std::string path = e.s;
 		Sample *sample = Sample::Load(path);
 		if (sample) {
 			g_BackgroundAudio.SFX().UpdateSample(sound, sample);
 		} else {
-			if (!sample) {
-				auto au = GetI18NCategory(I18NCat::AUDIO);
-				g_OSD.Show(OSDType::MESSAGE_WARNING, au->T("Audio file format not supported. Must be 16-bit WAV."));
-			}
+			auto au = GetI18NCategory(I18NCat::AUDIO);
+			g_OSD.Show(OSDType::MESSAGE_ERROR, au->T("Audio file format not supported. Must be WAV."));
 			value->clear();
 		}
 		return UI::EVENT_DONE;
@@ -297,12 +293,6 @@ void RetroAchievementsSettingsScreen::CreateAccountTab(UI::ViewGroup *viewGroup)
 		std::string errorMessage;
 		if (Achievements::LoginProblems(&errorMessage)) {
 			viewGroup->Add(new NoticeView(NoticeLevel::WARN, ac->T("Failed logging in to RetroAchievements"), errorMessage));
-			if (Achievements::HasToken()) {
-				viewGroup->Add(new Choice(di->T("Retry")))->OnClick.Add([=](UI::EventParams &) -> UI::EventReturn {
-					Achievements::TryLoginByToken();
-					return UI::EVENT_DONE;
-				});
-			}
 			viewGroup->Add(new Choice(di->T("Log out")))->OnClick.Add([=](UI::EventParams &) -> UI::EventReturn {
 				Achievements::Logout();
 				return UI::EVENT_DONE;
@@ -349,7 +339,6 @@ void RetroAchievementsSettingsScreen::CreateAccountTab(UI::ViewGroup *viewGroup)
 		return UI::EVENT_DONE;
 	});
 	viewGroup->Add(new CheckBox(&g_Config.bAchievementsChallengeMode, ac->T("Challenge Mode (no savestates)")))->SetEnabledPtr(&g_Config.bAchievementsEnable);
-	viewGroup->Add(new CheckBox(&g_Config.bAchievementsEncoreMode, ac->T("Encore Mode")))->SetEnabledPtr(&g_Config.bAchievementsEnable);
 	viewGroup->Add(new CheckBox(&g_Config.bAchievementsSoundEffects, ac->T("Sound Effects")))->SetEnabledPtr(&g_Config.bAchievementsEnable);  // not yet implemented
 
 	viewGroup->Add(new ItemHeader(di->T("Links")));
@@ -388,6 +377,7 @@ void RetroAchievementsSettingsScreen::CreateDeveloperToolsTab(UI::ViewGroup *vie
 
 	using namespace UI;
 	viewGroup->Add(new ItemHeader(di->T("Settings")));
+	viewGroup->Add(new CheckBox(&g_Config.bAchievementsEncoreMode, ac->T("Encore Mode")))->SetEnabledPtr(&g_Config.bAchievementsEnable);
 	viewGroup->Add(new CheckBox(&g_Config.bAchievementsUnofficial, ac->T("Unofficial achievements")))->SetEnabledPtr(&g_Config.bAchievementsEnable);
 	viewGroup->Add(new CheckBox(&g_Config.bAchievementsLogBadMemReads, ac->T("Log bad memory accesses")))->SetEnabledPtr(&g_Config.bAchievementsEnable);
 }

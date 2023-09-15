@@ -180,6 +180,7 @@ static std::string CutFromMain(std::string str) {
 static VulkanPipeline *CreateVulkanPipeline(VulkanRenderManager *renderManager, VkPipelineCache pipelineCache,
 	VkPipelineLayout layout, PipelineFlags pipelineFlags, VkSampleCountFlagBits sampleCount, const VulkanPipelineRasterStateKey &key,
 	const DecVtxFormat *decFmt, VulkanVertexShader *vs, VulkanFragmentShader *fs, VulkanGeometryShader *gs, bool useHwTransform, u32 variantBitmask, bool cacheLoad) {
+	_assert_(fs && vs);
 
 	if (!fs->GetModule()) {
 		ERROR_LOG(G3D, "Fragment shader missing in CreateVulkanPipeline");
@@ -187,6 +188,10 @@ static VulkanPipeline *CreateVulkanPipeline(VulkanRenderManager *renderManager, 
 	}
 	if (!vs->GetModule()) {
 		ERROR_LOG(G3D, "Vertex shader missing in CreateVulkanPipeline");
+		return nullptr;
+	}
+	if (gs && !gs->GetModule()) {
+		ERROR_LOG(G3D, "Geometry shader missing in CreateVulkanPipeline");
 		return nullptr;
 	}
 
@@ -351,9 +356,10 @@ VulkanPipeline *PipelineManagerVulkan::GetOrCreatePipeline(VulkanRenderManager *
 	key.gShader = gs ? gs->GetModule() : VK_NULL_HANDLE;
 	key.vtxFmtId = useHwTransform ? decFmt->id : 0;
 
-	auto iter = pipelines_.Get(key);
-	if (iter)
-		return iter;
+	VulkanPipeline *pipeline;
+	if (pipelines_.Get(key, &pipeline)) {
+		return pipeline;
+	}
 
 	PipelineFlags pipelineFlags = (PipelineFlags)0;
 	if (fs->Flags() & FragmentShaderFlags::USES_DISCARD) {
@@ -365,7 +371,7 @@ VulkanPipeline *PipelineManagerVulkan::GetOrCreatePipeline(VulkanRenderManager *
 
 	VkSampleCountFlagBits sampleCount = MultiSampleLevelToFlagBits(multiSampleLevel);
 
-	VulkanPipeline *pipeline = CreateVulkanPipeline(
+	pipeline = CreateVulkanPipeline(
 		renderManager, pipelineCache_, layout, pipelineFlags, sampleCount,
 		rasterKey, decFmt, vs, fs, gs, useHwTransform, variantBitmask, cacheLoad);
 
@@ -485,10 +491,11 @@ std::string PipelineManagerVulkan::DebugGetObjectString(std::string id, DebugSha
 	VulkanPipelineKey pipelineKey;
 	pipelineKey.FromString(id);
 
-	VulkanPipeline *pipeline = pipelines_.Get(pipelineKey);
-	if (!pipeline) {
+	VulkanPipeline *pipeline;
+	if (!pipelines_.Get(pipelineKey, &pipeline)) {
 		return "N/A (missing)";
 	}
+	_assert_(pipeline != nullptr);
 	u32 variants = pipeline->GetVariantsBitmask();
 
 	std::string keyDescription = pipelineKey.GetDescription(stringType, shaderManager);

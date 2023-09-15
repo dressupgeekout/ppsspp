@@ -404,13 +404,13 @@ public:
 	}
 	uint32_t GetDataFormatSupport(DataFormat fmt) const override;
 
-	PresentationMode GetPresentationMode() const override {
+	PresentMode GetPresentMode() const {
 		switch (vulkan_->GetPresentMode()) {
-		case VK_PRESENT_MODE_FIFO_KHR: return PresentationMode::FIFO;
-		case VK_PRESENT_MODE_FIFO_RELAXED_KHR: return PresentationMode::FIFO_RELAXED;
-		case VK_PRESENT_MODE_IMMEDIATE_KHR: return PresentationMode::IMMEDIATE;
-		case VK_PRESENT_MODE_MAILBOX_KHR: return PresentationMode::MAILBOX;
-		default: return PresentationMode::FIFO;
+		case VK_PRESENT_MODE_FIFO_KHR: return PresentMode::FIFO;
+		case VK_PRESENT_MODE_FIFO_RELAXED_KHR: return PresentMode::FIFO;  // We treat is as FIFO for now (and won't ever enable it anyway...)
+		case VK_PRESENT_MODE_IMMEDIATE_KHR: return PresentMode::IMMEDIATE;
+		case VK_PRESENT_MODE_MAILBOX_KHR: return PresentMode::MAILBOX;
+		default: return PresentMode::FIFO;
 		}
 	}
 
@@ -480,16 +480,12 @@ public:
 
 	void BeginFrame(DebugFlags debugFlags) override;
 	void EndFrame() override;
-	void Present() override;
+	void Present(PresentMode presentMode, int vblanks) override;
 
 	void WipeQueue() override;
 
 	int GetFrameCount() override {
 		return frameCount_;
-	}
-
-	FrameTimeData GetFrameTimeData(int framesBack) const override {
-		return renderManager_.GetFrameTimeData(framesBack);
 	}
 
 	void FlushState() override {}
@@ -564,7 +560,7 @@ private:
 	AutoRef<VKTexture> boundTextures_[MAX_BOUND_TEXTURES];
 	AutoRef<VKSamplerState> boundSamplers_[MAX_BOUND_TEXTURES];
 	VkImageView boundImageView_[MAX_BOUND_TEXTURES]{};
-	TextureBindFlags boundTextureFlags_[MAX_BOUND_TEXTURES];
+	TextureBindFlags boundTextureFlags_[MAX_BOUND_TEXTURES]{};
 
 	VulkanPushPool *push_ = nullptr;
 
@@ -866,7 +862,7 @@ static DataFormat DataFormatFromVulkanDepth(VkFormat fmt) {
 }
 
 VKContext::VKContext(VulkanContext *vulkan, bool useRenderThread)
-	: vulkan_(vulkan), renderManager_(vulkan, useRenderThread) {
+	: vulkan_(vulkan), renderManager_(vulkan, useRenderThread, frameTimeHistory_) {
 	shaderLanguageDesc_.Init(GLSL_VULKAN);
 
 	VkFormat depthStencilFormat = vulkan->GetDeviceInfo().preferredDepthStencilFormat;
@@ -899,6 +895,19 @@ VKContext::VKContext(VulkanContext *vulkan, bool useRenderThread)
 	caps_.sampleRateShadingSupported = vulkan->GetDeviceFeatures().enabled.standard.sampleRateShading != 0;
 	caps_.textureSwizzleSupported = true;
 
+	// Present mode stuff
+	caps_.presentMaxInterval = 1;
+	caps_.presentInstantModeChange = false;  // TODO: Fix this with some work in VulkanContext
+	caps_.presentModesSupported = (PresentMode)0;
+	for (auto mode : vulkan->GetAvailablePresentModes()) {
+		switch (mode) {
+		case VK_PRESENT_MODE_FIFO_KHR: caps_.presentModesSupported |= PresentMode::FIFO; break;
+		case VK_PRESENT_MODE_IMMEDIATE_KHR: caps_.presentModesSupported |= PresentMode::IMMEDIATE; break;
+		case VK_PRESENT_MODE_MAILBOX_KHR: caps_.presentModesSupported |= PresentMode::MAILBOX; break;
+		default: break;  // Ignore any other modes.
+		}
+	}
+
 	const auto &limits = vulkan->GetPhysicalDeviceProperties().properties.limits;
 
 	auto deviceProps = vulkan->GetPhysicalDeviceProperties(vulkan_->GetCurrentPhysicalDeviceIndex()).properties;
@@ -911,6 +920,7 @@ VKContext::VKContext(VulkanContext *vulkan, bool useRenderThread)
 	case VULKAN_VENDOR_QUALCOMM: caps_.vendor = GPUVendor::VENDOR_QUALCOMM; break;
 	case VULKAN_VENDOR_INTEL: caps_.vendor = GPUVendor::VENDOR_INTEL; break;
 	case VULKAN_VENDOR_APPLE: caps_.vendor = GPUVendor::VENDOR_APPLE; break;
+	case VULKAN_VENDOR_MESA: caps_.vendor = GPUVendor::VENDOR_MESA; break;
 	default:
 		WARN_LOG(G3D, "Unknown vendor ID %08x", deviceProps.vendorID);
 		caps_.vendor = GPUVendor::VENDOR_UNKNOWN;
@@ -1104,7 +1114,6 @@ VKContext::~VKContext() {
 }
 
 void VKContext::BeginFrame(DebugFlags debugFlags) {
-	// TODO: Bad dependency on g_Config here!
 	renderManager_.BeginFrame(debugFlags & DebugFlags::PROFILE_TIMESTAMPS, debugFlags & DebugFlags::PROFILE_SCOPES);
 
 	FrameData &frame = frame_[vulkan_->GetCurFrame()];
@@ -1121,7 +1130,10 @@ void VKContext::EndFrame() {
 	Invalidate(InvalidationFlags::CACHED_RENDER_STATE);
 }
 
-void VKContext::Present() {
+void VKContext::Present(PresentMode presentMode, int vblanks) {
+	if (presentMode == PresentMode::FIFO) {
+		_dbg_assert_(vblanks == 0 || vblanks == 1);
+	}
 	renderManager_.Present();
 	frameCount_++;
 }

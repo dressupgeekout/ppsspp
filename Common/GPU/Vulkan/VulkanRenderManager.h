@@ -182,7 +182,7 @@ struct CompileQueueEntry {
 
 class VulkanRenderManager {
 public:
-	VulkanRenderManager(VulkanContext *vulkan, bool useThread);
+	VulkanRenderManager(VulkanContext *vulkan, bool useThread, HistoryBuffer<FrameTimeData, FRAME_TIME_HISTORY_LENGTH> &frameTimeHistory);
 	~VulkanRenderManager();
 
 	// Makes sure that the GPU has caught up enough that we can start writing buffers of this frame again.
@@ -241,8 +241,7 @@ public:
 	}
 
 	void BindPipeline(VKRGraphicsPipeline *pipeline, PipelineFlags flags, VkPipelineLayout pipelineLayout) {
-		_dbg_assert_(curRenderStep_ && curRenderStep_->stepType == VKRStepType::RENDER);
-		_dbg_assert_(pipeline != nullptr);
+		_assert_(curRenderStep_ && curRenderStep_->stepType == VKRStepType::RENDER && pipeline != nullptr);
 		VkRenderData &data = curRenderStep_->commands.push_uninitialized();
 		data.cmd = VKRRenderCommand::BIND_GRAPHICS_PIPELINE;
 		pipelinesToCheck_.push_back(pipeline);
@@ -458,17 +457,6 @@ public:
 	void ResetStats();
 	void DrainCompileQueue();
 
-	// framesBack is the number of frames into the past to look.
-	FrameTimeData GetFrameTimeData(int framesBack) const {
-		FrameTimeData data;
-		if (framesBack >= frameIdGen_) {
-			data = {};
-			return data;
-		}
-		data = frameTimeData_[frameIdGen_ - framesBack];
-		return data;
-	}
-
 private:
 	void EndCurRenderStep();
 
@@ -506,6 +494,7 @@ private:
 	bool run_ = false;
 
 	bool useRenderThread_ = true;
+	bool measurePresentTime_ = false;
 
 	// This is the offset within this frame, in case of a mid-frame sync.
 	VKRStep *curRenderStep_ = nullptr;
@@ -552,6 +541,6 @@ private:
 
 	std::function<void(InvalidationCallbackFlags)> invalidationCallback_;
 
-	uint64_t frameIdGen_ = 31;
-	HistoryBuffer<FrameTimeData, 32> frameTimeData_;
+	uint64_t frameIdGen_ = FRAME_TIME_HISTORY_LENGTH;
+	HistoryBuffer<FrameTimeData, FRAME_TIME_HISTORY_LENGTH> &frameTimeHistory_;
 };

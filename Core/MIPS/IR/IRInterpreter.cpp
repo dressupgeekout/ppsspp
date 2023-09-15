@@ -60,19 +60,29 @@ alignas(16) static const uint32_t lowBytesMask[4] = {
 	0x000000FF, 0x000000FF, 0x000000FF, 0x000000FF,
 };
 
-u32 RunBreakpoint(u32 pc) {
+u32 IRRunBreakpoint(u32 pc) {
 	// Should we skip this breakpoint?
-	if (CBreakPoints::CheckSkipFirst() == pc)
+	uint32_t skipFirst = CBreakPoints::CheckSkipFirst();
+	if (skipFirst == pc || skipFirst == currentMIPS->pc)
 		return 0;
 
-	CBreakPoints::ExecBreakPoint(currentMIPS->pc);
+	// Did we already hit one?
+	if (coreState != CORE_RUNNING && coreState != CORE_NEXTFRAME)
+		return 1;
+
+	CBreakPoints::ExecBreakPoint(pc);
 	return coreState != CORE_RUNNING ? 1 : 0;
 }
 
-u32 RunMemCheck(u32 pc, u32 addr) {
+u32 IRRunMemCheck(u32 pc, u32 addr) {
 	// Should we skip this breakpoint?
-	if (CBreakPoints::CheckSkipFirst() == pc)
+	uint32_t skipFirst = CBreakPoints::CheckSkipFirst();
+	if (skipFirst == pc || skipFirst == currentMIPS->pc)
 		return 0;
+
+	// Did we already hit one?
+	if (coreState != CORE_RUNNING && coreState != CORE_NEXTFRAME)
+		return 1;
 
 	CBreakPoints::ExecOpMemCheck(addr, pc);
 	return coreState != CORE_RUNNING ? 1 : 0;
@@ -794,10 +804,10 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 		case IROp::FMin:
 			if (my_isnan(mips->f[inst->src1]) || my_isnan(mips->f[inst->src2])) {
 				// See interpreter for this logic: this is for vmin, we're comparing mantissa+exp.
-				if (mips->fi[inst->src1] < 0 && mips->fi[inst->src2] < 0) {
-					mips->fi[inst->dest] = std::max(mips->fi[inst->src1], mips->fi[inst->src2]);
+				if (mips->fs[inst->src1] < 0 && mips->fs[inst->src2] < 0) {
+					mips->fs[inst->dest] = std::max(mips->fs[inst->src1], mips->fs[inst->src2]);
 				} else {
-					mips->fi[inst->dest] = std::min(mips->fi[inst->src1], mips->fi[inst->src2]);
+					mips->fs[inst->dest] = std::min(mips->fs[inst->src1], mips->fs[inst->src2]);
 				}
 			} else {
 				mips->f[inst->dest] = std::min(mips->f[inst->src1], mips->f[inst->src2]);
@@ -806,10 +816,10 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 		case IROp::FMax:
 			if (my_isnan(mips->f[inst->src1]) || my_isnan(mips->f[inst->src2])) {
 				// See interpreter for this logic: this is for vmax, we're comparing mantissa+exp.
-				if (mips->fi[inst->src1] < 0 && mips->fi[inst->src2] < 0) {
-					mips->fi[inst->dest] = std::min(mips->fi[inst->src1], mips->fi[inst->src2]);
+				if (mips->fs[inst->src1] < 0 && mips->fs[inst->src2] < 0) {
+					mips->fs[inst->dest] = std::min(mips->fs[inst->src1], mips->fs[inst->src2]);
 				} else {
-					mips->fi[inst->dest] = std::max(mips->fi[inst->src1], mips->fi[inst->src2]);
+					mips->fs[inst->dest] = std::max(mips->fs[inst->src1], mips->fs[inst->src2]);
 				}
 			} else {
 				mips->f[inst->dest] = std::max(mips->f[inst->src1], mips->f[inst->src2]);
@@ -850,6 +860,9 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 			break;
 		}
 
+		case IROp::FpCondFromReg:
+			mips->fpcond = mips->r[inst->dest];
+			break;
 		case IROp::FpCondToReg:
 			mips->r[inst->dest] = mips->fpcond;
 			break;
@@ -963,11 +976,11 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 				mips->fs[inst->dest] = my_isinf(src) && src < 0.0f ? -2147483648LL : 2147483647LL;
 				break;
 			}
-			switch (mips->fcr31 & 3) {
-			case 0: mips->fs[inst->dest] = (int)round_ieee_754(src); break;  // RINT_0
-			case 1: mips->fs[inst->dest] = (int)src; break;  // CAST_1
-			case 2: mips->fs[inst->dest] = (int)ceilf(src); break;  // CEIL_2
-			case 3: mips->fs[inst->dest] = (int)floorf(src); break;  // FLOOR_3
+			switch (IRRoundMode(mips->fcr31 & 3)) {
+			case IRRoundMode::RINT_0: mips->fs[inst->dest] = (int)round_ieee_754(src); break;
+			case IRRoundMode::CAST_1: mips->fs[inst->dest] = (int)src; break;
+			case IRRoundMode::CEIL_2: mips->fs[inst->dest] = (int)ceilf(src); break;
+			case IRRoundMode::FLOOR_3: mips->fs[inst->dest] = (int)floorf(src); break;
 			}
 			break; //cvt.w.s
 		}
@@ -991,19 +1004,15 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 			} else if (sv <= (double)(int)0x80000000) {
 				mips->fs[inst->dest] = 0x80000000;
 			} else {
-				switch (inst->src2 >> 6) {
-				case 0: mips->fs[inst->dest] = (int)round_ieee_754(sv); break;
-				case 1: mips->fs[inst->dest] = src >= 0 ? (int)floor(sv) : (int)ceil(sv); break;
-				case 2: mips->fs[inst->dest] = (int)ceil(sv); break;
-				case 3: mips->fs[inst->dest] = (int)floor(sv); break;
+				switch (IRRoundMode(inst->src2 >> 6)) {
+				case IRRoundMode::RINT_0: mips->fs[inst->dest] = (int)round_ieee_754(sv); break;
+				case IRRoundMode::CAST_1: mips->fs[inst->dest] = src >= 0 ? (int)floor(sv) : (int)ceil(sv); break;
+				case IRRoundMode::CEIL_2: mips->fs[inst->dest] = (int)ceil(sv); break;
+				case IRRoundMode::FLOOR_3: mips->fs[inst->dest] = (int)floor(sv); break;
 				}
 			}
 			break;
 		}
-
-		case IROp::ZeroFpCond:
-			mips->fpcond = 0;
-			break;
 
 		case IROp::FMovFromGPR:
 			memcpy(&mips->f[inst->dest], &mips->r[inst->src1], 4);
@@ -1044,7 +1053,7 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 			break;
 
 		case IROp::Downcount:
-			mips->downcount -= inst->constant;
+			mips->downcount -= (int)inst->constant;
 			break;
 
 		case IROp::SetPC:
@@ -1101,14 +1110,14 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst, int count) {
 			break;
 
 		case IROp::Breakpoint:
-			if (RunBreakpoint(mips->pc)) {
+			if (IRRunBreakpoint(inst->constant)) {
 				CoreTiming::ForceCheck();
 				return mips->pc;
 			}
 			break;
 
 		case IROp::MemoryCheck:
-			if (RunMemCheck(mips->pc, mips->r[inst->src1] + inst->constant)) {
+			if (IRRunMemCheck(mips->pc + inst->dest, mips->r[inst->src1] + inst->constant)) {
 				CoreTiming::ForceCheck();
 				return mips->pc;
 			}

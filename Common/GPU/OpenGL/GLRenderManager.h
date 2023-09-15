@@ -227,7 +227,7 @@ struct GLRRenderThreadTask {
 // directly in the destructor.
 class GLRenderManager {
 public:
-	GLRenderManager();
+	GLRenderManager(HistoryBuffer<FrameTimeData, FRAME_TIME_HISTORY_LENGTH> &frameTimeHistory);
 	~GLRenderManager();
 
 	GLRenderManager(GLRenderManager &) = delete;
@@ -812,9 +812,8 @@ public:
 		_dbg_assert_(foundCount == 1);
 	}
 
-	void SetSwapFunction(std::function<void()> swapFunction, bool retainControl) {
+	void SetSwapFunction(std::function<void()> swapFunction) {
 		swapFunction_ = swapFunction;
-		retainControl_ = retainControl;
 	}
 
 	void SetSwapIntervalFunction(std::function<void(int)> swapIntervalFunction) {
@@ -893,7 +892,6 @@ private:
 
 	std::function<void()> swapFunction_;
 	std::function<void(int)> swapIntervalFunction_;
-	bool retainControl_ = false;
 	GLBufferStrategy bufferStrategy_ = GLBufferStrategy::SUBDATA;
 
 	int inflightFrames_ = MAX_INFLIGHT_FRAMES;
@@ -912,4 +910,7 @@ private:
 
 	std::string profilePassesString_;
 	InvalidationCallback invalidationCallback_;
+
+	uint64_t frameIdGen_ = FRAME_TIME_HISTORY_LENGTH;
+	HistoryBuffer<FrameTimeData, FRAME_TIME_HISTORY_LENGTH> &frameTimeHistory_;
 };

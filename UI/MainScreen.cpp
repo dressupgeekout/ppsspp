@@ -763,7 +763,7 @@ void GameBrowser::Refresh() {
 		LinearLayout *topBar = new LinearLayout(ORIENT_HORIZONTAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT));
 		if (browseFlags_ & BrowseFlags::NAVIGATE) {
 			topBar->Add(new Spacer(2.0f));
-			topBar->Add(new TextView(path_.GetFriendlyPath().c_str(), ALIGN_VCENTER | FLAG_WRAP_TEXT, true, new LinearLayoutParams(FILL_PARENT, 64.0f, 1.0f)));
+			topBar->Add(new TextView(path_.GetFriendlyPath(), ALIGN_VCENTER | FLAG_WRAP_TEXT, true, new LinearLayoutParams(FILL_PARENT, 64.0f, 1.0f)));
 			topBar->Add(new Choice(ImageID("I_HOME"), new LayoutParams(WRAP_CONTENT, 64.0f)))->OnClick.Handle(this, &GameBrowser::OnHomeClick);
 			if (System_GetPropertyBool(SYSPROP_HAS_ADDITIONAL_STORAGE)) {
 				topBar->Add(new Choice(ImageID("I_SDCARD"), new LayoutParams(WRAP_CONTENT, 64.0f)))->OnClick.Handle(this, &GameBrowser::StorageClick);
@@ -1244,11 +1244,8 @@ void MainScreen::CreateViews() {
 		}
 	}
 
-#if !PPSSPP_PLATFORM(UWP)
-	// Having an exit button is against UWP guidelines.
 	rightColumnChoices->Add(new Spacer(25.0));
 	rightColumnChoices->Add(new Choice(mm->T("Exit")))->OnClick.Handle(this, &MainScreen::OnExit);
-#endif
 
 	if (vertical) {
 		root_ = new LinearLayout(ORIENT_VERTICAL);
@@ -1386,7 +1383,7 @@ UI::EventReturn MainScreen::OnLoadFile(UI::EventParams &e) {
 	if (System_GetPropertyBool(SYSPROP_HAS_FILE_BROWSER)) {
 		auto mm = GetI18NCategory(I18NCat::MAINMENU);
 		System_BrowseForFile(mm->T("Load"), BrowseFileType::BOOTABLE, [](const std::string &value, int) {
-			System_PostUIMessage("boot", value.c_str());
+			System_PostUIMessage("boot", value);
 		});
 	}
 	return UI::EVENT_DONE;
@@ -1601,7 +1598,7 @@ void UmdReplaceScreen::CreateViews() {
 			new LinearLayoutParams(FILL_PARENT, FILL_PARENT));
 		scrollRecentGames->Add(tabRecentGames);
 		leftColumn->AddTab(mm->T("Recent"), scrollRecentGames);
-		tabRecentGames->OnChoice.Handle(this, &UmdReplaceScreen::OnGameSelectedInstant);
+		tabRecentGames->OnChoice.Handle(this, &UmdReplaceScreen::OnGameSelected);
 		tabRecentGames->OnHoldChoice.Handle(this, &UmdReplaceScreen::OnGameSelected);
 	}
 	ScrollView *scrollAllGames = new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT));
@@ -1615,11 +1612,23 @@ void UmdReplaceScreen::CreateViews() {
 
 	leftColumn->AddTab(mm->T("Games"), scrollAllGames);
 
-	tabAllGames->OnChoice.Handle(this, &UmdReplaceScreen::OnGameSelectedInstant);
+	tabAllGames->OnChoice.Handle(this, &UmdReplaceScreen::OnGameSelected);
 
 	tabAllGames->OnHoldChoice.Handle(this, &UmdReplaceScreen::OnGameSelected);
 
+	if (System_GetPropertyBool(SYSPROP_HAS_FILE_BROWSER)) {
+		rightColumnItems->Add(new Choice(mm->T("Load", "Load...")))->OnClick.Add([&](UI::EventParams &e) {
+			auto mm = GetI18NCategory(I18NCat::MAINMENU);
+			System_BrowseForFile(mm->T("Load"), BrowseFileType::BOOTABLE, [&](const std::string &value, int) {
+				__UmdReplace(Path(value));
+				TriggerFinish(DR_OK);
+			});
+			return EVENT_DONE;
+		});
+	}
+
 	rightColumnItems->Add(new Choice(di->T("Cancel")))->OnClick.Handle<UIScreen>(this, &UIScreen::OnCancel);
+	rightColumnItems->Add(new Spacer());
 	rightColumnItems->Add(new Choice(mm->T("Game Settings")))->OnClick.Handle(this, &UmdReplaceScreen::OnGameSettings);
 
 	if (g_Config.HasRecentIsos()) {
@@ -1646,12 +1655,6 @@ UI::EventReturn UmdReplaceScreen::OnGameSelected(UI::EventParams &e) {
 
 UI::EventReturn UmdReplaceScreen::OnGameSettings(UI::EventParams &e) {
 	screenManager()->push(new GameSettingsScreen(Path()));
-	return UI::EVENT_DONE;
-}
-
-UI::EventReturn UmdReplaceScreen::OnGameSelectedInstant(UI::EventParams &e) {
-	__UmdReplace(Path(e.s));
-	TriggerFinish(DR_OK);
 	return UI::EVENT_DONE;
 }
 

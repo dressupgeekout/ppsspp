@@ -239,22 +239,22 @@ class PrintfLogger : public LogListener
       {
          switch (message.level)
          {
-            case LogTypes::LVERBOSE:
-            case LogTypes::LDEBUG:
+            case LogLevel::LVERBOSE:
+            case LogLevel::LDEBUG:
                log_(RETRO_LOG_DEBUG, "[%s] %s",
                      message.log, message.msg.c_str());
                break;
 
-            case LogTypes::LERROR:
+            case LogLevel::LERROR:
                log_(RETRO_LOG_ERROR, "[%s] %s",
                      message.log, message.msg.c_str());
                break;
-            case LogTypes::LNOTICE:
-            case LogTypes::LWARNING:
+            case LogLevel::LNOTICE:
+            case LogLevel::LWARNING:
                log_(RETRO_LOG_WARN, "[%s] %s",
                      message.log, message.msg.c_str());
                break;
-            case LogTypes::LINFO:
+            case LogLevel::LINFO:
             default:
                log_(RETRO_LOG_INFO, "[%s] %s",
                      message.log, message.msg.c_str());
@@ -474,13 +474,14 @@ static void check_variables(CoreParameter &coreParam)
          g_Config.iLanguage = PSP_SYSTEMPARAM_LANGUAGE_CHINESE_SIMPLIFIED;
    }
 
+#ifndef __EMSCRIPTEN__
    var.key = "ppsspp_cpu_core";
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
    {
       if (!strcmp(var.value, "JIT"))
          g_Config.iCpuCore = (int)CPUCore::JIT;
       else if (!strcmp(var.value, "IR JIT"))
-         g_Config.iCpuCore = (int)CPUCore::IR_JIT;
+         g_Config.iCpuCore = (int)CPUCore::IR_INTERPRETER;
       else if (!strcmp(var.value, "Interpreter"))
          g_Config.iCpuCore = (int)CPUCore::INTERPRETER;
    }
@@ -489,8 +490,11 @@ static void check_variables(CoreParameter &coreParam)
        // Just gonna force it to the IR interpreter on startup.
        // We don't hide the option, but we make sure it's off on bootup. In case someone wants
        // to experiment in future iOS versions or something...
-       g_Config.iCpuCore = (int)CPUCore::IR_JIT;
+       g_Config.iCpuCore = (int)CPUCore::IR_INTERPRETER;
    }
+#else
+   g_Config.iCpuCore = (int)CPUCore::INTERPRETER;
+#endif
 
    var.key = "ppsspp_fast_memory";
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
@@ -1077,7 +1081,7 @@ void retro_init(void)
       logman->RemoveListener(logman->GetDebuggerListener());
       logman->ChangeFileLog(nullptr);
       logman->AddListener(printfLogger);
-      logman->SetAllLogLevels(LogTypes::LINFO);
+      logman->SetAllLogLevels(LogLevel::LINFO);
    }
 
    g_Config.Load("", "");
@@ -1174,7 +1178,7 @@ namespace Libretro
 
       if (ctx->GetDrawContext()) {
          ctx->GetDrawContext()->EndFrame();
-         ctx->GetDrawContext()->Present();
+         ctx->GetDrawContext()->Present(Draw::PresentMode::FIFO, 1);
       }
    }
 
@@ -1749,7 +1753,7 @@ void System_InputBoxGetString(const std::string &title, const std::string &defau
 #endif
 
 // TODO: To avoid having to define these here, these should probably be turned into system "requests".
-void NativeSaveSecret(const char *nameOfSecret, const std::string &data) {}
+bool NativeSaveSecret(const char *nameOfSecret, const std::string &data) { return false; }
 std::string NativeLoadSecret(const char *nameOfSecret) {
    return "";
 }

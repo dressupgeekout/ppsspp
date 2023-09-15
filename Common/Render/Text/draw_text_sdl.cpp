@@ -38,7 +38,8 @@ TextDrawerSDL::~TextDrawerSDL() {
 
 #if defined(USE_SDL2_TTF_FONTCONFIG)
 	FcConfigDestroy(config);
-	FcFini();
+	// Don't call this - it crashes, see https://github.com/openframeworks/openFrameworks/issues/5061.
+	//FcFini();
 #endif
 }
 
@@ -172,7 +173,6 @@ bool TextDrawerSDL::FindFallbackFonts(uint32_t missingGlyph, int ptSize) {
 
 		if (TTF_GlyphIsProvided32(font, missingGlyph)) {
 			fallbackFonts_.insert(fallbackFonts_.begin(), font);
-			fallbackFontPaths_.erase(fallbackFontPaths_.begin() + i);
 			return true;
 		} else {
 			TTF_CloseFont(font);

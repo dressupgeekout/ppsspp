@@ -290,7 +290,7 @@ include $(CLEAR_VARS)
 include $(LOCAL_PATH)/Locals.mk
 LOCAL_WHOLE_STATIC_LIBRARIES += ppsspp_common
 
-ifeq ($(TARGET_ARCH_ABI),x86)
+ifeq ($(TARGET_ARCH_ABI),x86_64)
 ARCH_FILES := \
   $(SRC)/Core/MIPS/x86/CompALU.cpp \
   $(SRC)/Core/MIPS/x86/CompBranch.cpp \
@@ -303,22 +303,15 @@ ARCH_FILES := \
   $(SRC)/Core/MIPS/x86/JitSafeMem.cpp \
   $(SRC)/Core/MIPS/x86/RegCache.cpp \
   $(SRC)/Core/MIPS/x86/RegCacheFPU.cpp \
-  $(SRC)/GPU/Common/VertexDecoderX86.cpp \
-  $(SRC)/GPU/Software/DrawPixelX86.cpp \
-  $(SRC)/GPU/Software/SamplerX86.cpp
-else ifeq ($(TARGET_ARCH_ABI),x86_64)
-ARCH_FILES := \
-  $(SRC)/Core/MIPS/x86/CompALU.cpp \
-  $(SRC)/Core/MIPS/x86/CompBranch.cpp \
-  $(SRC)/Core/MIPS/x86/CompFPU.cpp \
-  $(SRC)/Core/MIPS/x86/CompLoadStore.cpp \
-  $(SRC)/Core/MIPS/x86/CompVFPU.cpp \
-  $(SRC)/Core/MIPS/x86/CompReplace.cpp \
-  $(SRC)/Core/MIPS/x86/Asm.cpp \
-  $(SRC)/Core/MIPS/x86/Jit.cpp \
-  $(SRC)/Core/MIPS/x86/JitSafeMem.cpp \
-  $(SRC)/Core/MIPS/x86/RegCache.cpp \
-  $(SRC)/Core/MIPS/x86/RegCacheFPU.cpp \
+  $(SRC)/Core/MIPS/x86/X64IRAsm.cpp \
+  $(SRC)/Core/MIPS/x86/X64IRCompALU.cpp \
+  $(SRC)/Core/MIPS/x86/X64IRCompBranch.cpp \
+  $(SRC)/Core/MIPS/x86/X64IRCompFPU.cpp \
+  $(SRC)/Core/MIPS/x86/X64IRCompLoadStore.cpp \
+  $(SRC)/Core/MIPS/x86/X64IRCompSystem.cpp \
+  $(SRC)/Core/MIPS/x86/X64IRCompVec.cpp \
+  $(SRC)/Core/MIPS/x86/X64IRJit.cpp \
+  $(SRC)/Core/MIPS/x86/X64IRRegCache.cpp \
   $(SRC)/GPU/Common/VertexDecoderX86.cpp \
   $(SRC)/GPU/Software/DrawPixelX86.cpp \
   $(SRC)/GPU/Software/SamplerX86.cpp
@@ -350,6 +343,15 @@ ARCH_FILES := \
   $(SRC)/Core/MIPS/ARM64/Arm64Jit.cpp \
   $(SRC)/Core/MIPS/ARM64/Arm64RegCache.cpp \
   $(SRC)/Core/MIPS/ARM64/Arm64RegCacheFPU.cpp \
+  $(SRC)/Core/MIPS/ARM64/Arm64IRAsm.cpp \
+  $(SRC)/Core/MIPS/ARM64/Arm64IRCompALU.cpp \
+  $(SRC)/Core/MIPS/ARM64/Arm64IRCompBranch.cpp \
+  $(SRC)/Core/MIPS/ARM64/Arm64IRCompFPU.cpp \
+  $(SRC)/Core/MIPS/ARM64/Arm64IRCompLoadStore.cpp \
+  $(SRC)/Core/MIPS/ARM64/Arm64IRCompSystem.cpp \
+  $(SRC)/Core/MIPS/ARM64/Arm64IRCompVec.cpp \
+  $(SRC)/Core/MIPS/ARM64/Arm64IRJit.cpp \
+  $(SRC)/Core/MIPS/ARM64/Arm64IRRegCache.cpp \
   $(SRC)/Core/Util/DisArm64.cpp \
   $(SRC)/GPU/Common/VertexDecoderArm64.cpp \
   Arm64EmitterTest.cpp
@@ -479,6 +481,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/ConfigSettings.cpp \
   $(SRC)/Core/CoreTiming.cpp \
   $(SRC)/Core/CwCheat.cpp \
+  $(SRC)/Core/FrameTiming.cpp \
   $(SRC)/Core/HDRemaster.cpp \
   $(SRC)/Core/Instance.cpp \
   $(SRC)/Core/KeyMap.cpp \

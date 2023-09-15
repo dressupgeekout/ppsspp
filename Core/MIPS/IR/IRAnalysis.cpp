@@ -21,28 +21,33 @@
 #include <algorithm>
 
 
-static bool IRReadsFrom(const IRInst &inst, int reg, char type, bool directly = false) {
+static bool IRReadsFrom(const IRInst &inst, int reg, char type, bool *directly) {
 	const IRMeta *m = GetIRMeta(inst.op);
 
 	if (m->types[1] == type && inst.src1 == reg) {
+		if (directly)
+			*directly = true;
 		return true;
 	}
 	if (m->types[2] == type && inst.src2 == reg) {
+		if (directly)
+			*directly = true;
 		return true;
 	}
 	if ((m->flags & (IRFLAG_SRC3 | IRFLAG_SRC3DST)) != 0 && m->types[0] == type && inst.src3 == reg) {
+		if (directly)
+			*directly = true;
 		return true;
 	}
-	if (!directly) {
-		if (inst.op == IROp::Interpret || inst.op == IROp::CallReplacement || inst.op == IROp::Syscall || inst.op == IROp::Break)
-			return true;
-		if (inst.op == IROp::Breakpoint || inst.op == IROp::MemoryCheck)
-			return true;
-	}
+
+	if (directly)
+		*directly = false;
+	if ((m->flags & (IRFLAG_EXIT | IRFLAG_BARRIER)) != 0)
+		return true;
 	return false;
 }
 
-bool IRReadsFromFPR(const IRInst &inst, int reg, bool directly) {
+bool IRReadsFromFPR(const IRInst &inst, int reg, bool *directly) {
 	if (IRReadsFrom(inst, reg, 'F', directly))
 		return true;
 
@@ -66,7 +71,26 @@ bool IRReadsFromFPR(const IRInst &inst, int reg, bool directly) {
 	return false;
 }
 
-bool IRReadsFromGPR(const IRInst &inst, int reg, bool directly) {
+static int IRReadsFromList(const IRInst &inst, IRReg regs[4], char type) {
+	const IRMeta *m = GetIRMeta(inst.op);
+	int c = 0;
+
+	if (m->types[1] == type)
+		regs[c++] = inst.src1;
+	if (m->types[2] == type)
+		regs[c++] = inst.src2;
+	if ((m->flags & (IRFLAG_SRC3 | IRFLAG_SRC3DST)) != 0 && m->types[0] == type)
+		regs[c++] = inst.src3;
+
+	if (inst.op == IROp::Interpret || inst.op == IROp::CallReplacement || inst.op == IROp::Syscall || inst.op == IROp::Break)
+		return -1;
+	if (inst.op == IROp::Breakpoint || inst.op == IROp::MemoryCheck)
+		return -1;
+
+	return c;
+}
+
+bool IRReadsFromGPR(const IRInst &inst, int reg, bool *directly) {
 	return IRReadsFrom(inst, reg, 'G', directly);
 }
 
@@ -99,6 +123,59 @@ bool IRWritesToFPR(const IRInst &inst, int reg) {
 	return false;
 }
 
+int IRDestFPRs(const IRInst &inst, IRReg regs[4]) {
+	const IRMeta *m = GetIRMeta(inst.op);
+
+	// Doesn't write to anything.
+	if ((m->flags & IRFLAG_SRC3) != 0)
+		return 0;
+
+	if (m->types[0] == 'F') {
+		regs[0] = inst.dest;
+		return 1;
+	}
+	if (m->types[0] == 'V') {
+		for (int i = 0; i < 4; ++i)
+			regs[i] = inst.dest + i;
+		return 4;
+	}
+	if (m->types[0] == '2') {
+		for (int i = 0; i < 2; ++i)
+			regs[i] = inst.dest + i;
+		return 2;
+	}
+	return 0;
+}
+
+int IRReadsFromGPRs(const IRInst &inst, IRReg regs[4]) {
+	return IRReadsFromList(inst, regs, 'G');
+}
+
+int IRReadsFromFPRs(const IRInst &inst, IRReg regs[16]) {
+	int c = IRReadsFromList(inst, regs, 'F');
+	if (c != 0)
+		return c;
+
+	const IRMeta *m = GetIRMeta(inst.op);
+
+	// We also need to check V and 2.  Indirect reads already checked, don't check again.
+	if (m->types[1] == 'V' || m->types[1] == '2') {
+		for (int i = 0; i < (m->types[1] == 'V' ? 4 : 2); ++i)
+			regs[c++] = inst.src1 + i;
+	}
+	if (m->types[2] == 'V' || m->types[2] == '2') {
+		for (int i = 0; i < (m->types[2] == 'V' ? 4 : 2); ++i)
+			regs[c++] = inst.src2 + i;
+	}
+	if ((m->flags & (IRFLAG_SRC3 | IRFLAG_SRC3DST)) != 0) {
+		if (m->types[0] == 'V' || m->types[0] == '2') {
+			for (int i = 0; i < (m->types[0] == 'V' ? 4 : 2); ++i)
+				regs[c++] = inst.src3 + i;
+		}
+	}
+	return c;
+}
+
 IRUsage IRNextGPRUsage(int gpr, const IRSituation &info) {
 	// Exclude any "special" regs from this logic for now.
 	if (gpr >= 32)
@@ -127,13 +204,24 @@ IRUsage IRNextFPRUsage(int fpr, const IRSituation &info) {
 	for (int i = 0; i < count; ++i) {
 		const IRInst inst = info.instructions[info.currentIndex + i];
 
-		if (IRReadsFromFPR(inst, fpr))
-			return IRUsage::READ;
+		if (IRReadsFromFPR(inst, fpr)) {
+			// Special case a broadcast that clobbers it.
+			if (inst.op == IROp::Vec4Shuffle && inst.src2 == 0 && inst.dest == inst.src1)
+				return inst.src1 == fpr ? IRUsage::READ : IRUsage::CLOBBERED;
+
+			// If this is an exit reading a temp, ignore it.
+			if (fpr < IRVTEMP_PFX_S || (GetIRMeta(inst.op)->flags & IRFLAG_EXIT) == 0)
+				return IRUsage::READ;
+		}
 		// We say WRITE when the current instruction writes.  It's not useful for spilling.
 		if (IRWritesToFPR(inst, fpr)) {
 			return i == 0 ? IRUsage::WRITE : IRUsage::CLOBBERED;
 		}
 	}
+
+	// This means we only had exits and hit the end.
+	if (fpr >= IRVTEMP_PFX_S && count == info.numInstructions - info.currentIndex)
+		return IRUsage::CLOBBERED;
 
 	return IRUsage::UNUSED;
 }

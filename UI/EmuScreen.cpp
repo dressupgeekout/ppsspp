@@ -563,14 +563,14 @@ void EmuScreen::sendMessage(const char *message, const char *value) {
 	}
 }
 
-void EmuScreen::UnsyncTouch(const TouchInput &touch) {
+bool EmuScreen::UnsyncTouch(const TouchInput &touch) {
 	System_Notify(SystemNotification::ACTIVITY);
 
 	if (chatMenu_ && chatMenu_->GetVisibility() == UI::V_VISIBLE) {
 		// Avoid pressing touch button behind the chat
 		if (chatMenu_->Contains(touch.x, touch.y)) {
 			chatMenu_->Touch(touch);
-			return;
+			return true;
 		} else if ((touch.flags & TOUCH_DOWN) != 0) {
 			chatMenu_->Close();
 			if (chatButton_)
@@ -582,6 +582,7 @@ void EmuScreen::UnsyncTouch(const TouchInput &touch) {
 	if (root_) {
 		root_->Touch(touch);
 	}
+	return true;
 }
 
 void EmuScreen::onVKey(int virtualKeyCode, bool down) {
@@ -794,6 +795,16 @@ void EmuScreen::onVKey(int virtualKeyCode, bool down) {
 		if (down)
 			g_Config.iInternalScreenRotation = ROTATION_LOCKED_HORIZONTAL180;
 		break;
+	case VIRTKEY_TOGGLE_WLAN:
+		if (down) {
+			auto n = GetI18NCategory(I18NCat::NETWORKING);
+			auto di = GetI18NCategory(I18NCat::DIALOG);
+			g_Config.bEnableWlan = !g_Config.bEnableWlan;
+			// Try to avoid adding more strings so we piece together a message from existing ones.
+			g_OSD.Show(OSDType::MESSAGE_INFO, StringFromFormat(
+				"%s: %s", n->T("Enable networking"), g_Config.bEnableWlan ? di->T("Enabled") : di->T("Disabled")), 2.0, "toggle_wlan");
+		}
+		break;
 	}
 }
 
@@ -833,19 +844,25 @@ bool EmuScreen::UnsyncKey(const KeyInput &key) {
 	System_Notify(SystemNotification::ACTIVITY);
 
 	if (UI::IsFocusMovementEnabled()) {
-		if (UIScreen::UnsyncKey(key)) {
-			return true;
-		} else if ((key.flags & KEY_DOWN) != 0 && UI::IsEscapeKey(key)) {
-			if (chatMenu_)
-				chatMenu_->Close();
-			if (chatButton_)
-				chatButton_->SetVisibility(UI::V_VISIBLE);
-			UI::EnableFocusMovement(false);
-			return true;
-		}
+		return UIScreen::UnsyncKey(key);
 	}
 
 	return controlMapper_.Key(key, &pauseTrigger_);
+}
+
+bool EmuScreen::key(const KeyInput &key) {
+	bool retval = UIScreen::key(key);
+
+	if (!retval && (key.flags & KEY_DOWN) != 0 && UI::IsEscapeKey(key)) {
+		if (chatMenu_)
+			chatMenu_->Close();
+		if (chatButton_)
+			chatButton_->SetVisibility(UI::V_VISIBLE);
+		UI::EnableFocusMovement(false);
+		return true;
+	}
+
+	return retval;
 }
 
 void EmuScreen::UnsyncAxis(const AxisInput &axis) {
@@ -1117,7 +1134,9 @@ void EmuScreen::update() {
 	if (invalid_)
 		return;
 
-	controlMapper_.Update();
+	double now = time_now_d();
+
+	controlMapper_.Update(now);
 
 	if (pauseTrigger_) {
 		pauseTrigger_ = false;
@@ -1137,7 +1156,7 @@ void EmuScreen::update() {
 			saveStatePreview_->SetFilename(fn);
 			if (!fn.empty()) {
 				saveStatePreview_->SetVisibility(UI::V_VISIBLE);
-				saveStatePreviewShownTime_ = time_now_d();
+				saveStatePreviewShownTime_ = now;
 			} else {
 				saveStatePreview_->SetVisibility(UI::V_GONE);
 			}
@@ -1145,10 +1164,10 @@ void EmuScreen::update() {
 
 		if (saveStatePreview_->GetVisibility() == UI::V_VISIBLE) {
 			double endTime = saveStatePreviewShownTime_ + 2.0;
-			float alpha = clamp_value((endTime - time_now_d()) * 4.0, 0.0, 1.0);
+			float alpha = clamp_value((endTime - now) * 4.0, 0.0, 1.0);
 			saveStatePreview_->SetColor(colorAlpha(0x00FFFFFF, alpha));
 
-			if (time_now_d() - saveStatePreviewShownTime_ > 2) {
+			if (now - saveStatePreviewShownTime_ > 2) {
 				saveStatePreview_->SetVisibility(UI::V_GONE);
 			}
 		}
@@ -1177,6 +1196,7 @@ static const char *CPUCoreAsString(int core) {
 	case 0: return "Interpreter";
 	case 1: return "JIT";
 	case 2: return "IR Interpreter";
+	case 3: return "JIT Using IR";
 	default: return "N/A";
 	}
 }
@@ -1504,7 +1524,7 @@ bool EmuScreen::hasVisibleUI() {
 	if (g_Config.bEnableCardboardVR || g_Config.bEnableNetworkChat)
 		return true;
 	// Debug UI.
-	if ((DebugOverlay)g_Config.iDebugOverlay != DebugOverlay::OFF)
+	if ((DebugOverlay)g_Config.iDebugOverlay != DebugOverlay::OFF || g_Config.bShowDeveloperMenu)
 		return true;
 
 	// Exception information.
@@ -1548,7 +1568,7 @@ void EmuScreen::renderUI() {
 	}
 
 #ifdef USE_PROFILER
-	if (g_Config.bShowFrameProfiler && !invalid_) {
+	if ((DebugOverlay)g_Config.iDebugOverlay == DebugOverlay::FRAME_PROFILE && !invalid_) {
 		DrawProfile(*ctx);
 	}
 #endif

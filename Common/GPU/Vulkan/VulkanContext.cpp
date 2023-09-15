@@ -57,6 +57,7 @@ std::string VulkanVendorString(uint32_t vendorId) {
 	case VULKAN_VENDOR_QUALCOMM: return "Qualcomm";
 	case VULKAN_VENDOR_IMGTEC: return "Imagination";
 	case VULKAN_VENDOR_APPLE: return "Apple";
+	case VULKAN_VENDOR_MESA: return "Mesa";
 	default:
 		return StringFromFormat("%08x", vendorId);
 	}
@@ -1289,9 +1290,9 @@ bool VulkanContext::InitSwapchain() {
 	for (size_t i = 0; i < presentModeCount; i++) {
 		bool match = false;
 		match = match || ((flags_ & VULKAN_FLAG_PRESENT_MAILBOX) && presentModes[i] == VK_PRESENT_MODE_MAILBOX_KHR);
+		match = match || ((flags_ & VULKAN_FLAG_PRESENT_IMMEDIATE) && presentModes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR);
 		match = match || ((flags_ & VULKAN_FLAG_PRESENT_FIFO_RELAXED) && presentModes[i] == VK_PRESENT_MODE_FIFO_RELAXED_KHR);
 		match = match || ((flags_ & VULKAN_FLAG_PRESENT_FIFO) && presentModes[i] == VK_PRESENT_MODE_FIFO_KHR);
-		match = match || ((flags_ & VULKAN_FLAG_PRESENT_IMMEDIATE) && presentModes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR);
 
 		// Default to the first present mode from the list.
 		if (match || swapchainPresentMode == VK_PRESENT_MODE_MAX_ENUM_KHR) {
@@ -1301,10 +1302,6 @@ bool VulkanContext::InitSwapchain() {
 			break;
 		}
 	}
-#ifdef __ANDROID__
-	// HACK
-	swapchainPresentMode = VK_PRESENT_MODE_FIFO_KHR;
-#endif
 	delete[] presentModes;
 	// Determine the number of VkImage's to use in the swap chain (we desire to
 	// own only 1 image at a time, besides the images being displayed and

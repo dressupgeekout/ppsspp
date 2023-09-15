@@ -25,9 +25,6 @@
 #define UINT64_MAX 0xFFFFFFFFFFFFFFFFULL
 #endif
 
-
-#define USE_PRESENT_WAIT 0
-
 using namespace PPSSPP_VK;
 
 // renderPass is an example of the "compatibility class" or RenderPassType type.
@@ -250,16 +247,20 @@ bool VKRComputePipeline::CreateAsync(VulkanContext *vulkan) {
 	return true;
 }
 
-VulkanRenderManager::VulkanRenderManager(VulkanContext *vulkan, bool useThread)
+VulkanRenderManager::VulkanRenderManager(VulkanContext *vulkan, bool useThread, HistoryBuffer<FrameTimeData, FRAME_TIME_HISTORY_LENGTH> &frameTimeHistory)
 	: vulkan_(vulkan), queueRunner_(vulkan),
 	initTimeMs_("initTimeMs"),
 	totalGPUTimeMs_("totalGPUTimeMs"),
 	renderCPUTimeMs_("renderCPUTimeMs"),
-	useRenderThread_(useThread)
+	useRenderThread_(useThread),
+	frameTimeHistory_(frameTimeHistory)
 {
 	inflightFramesAtStart_ = vulkan_->GetInflightFrames();
 
-	frameDataShared_.Init(vulkan, useThread);
+	// For present timing experiments. Disabled for now.
+	measurePresentTime_ = false;
+
+	frameDataShared_.Init(vulkan, useThread, measurePresentTime_);
 
 	for (int i = 0; i < inflightFramesAtStart_; i++) {
 		frameData_[i].Init(vulkan, i);
@@ -307,7 +308,7 @@ bool VulkanRenderManager::CreateBackbuffers() {
 		INFO_LOG(G3D, "Starting Vulkan compiler thread");
 		compileThread_ = std::thread(&VulkanRenderManager::CompileThreadFunc, this);
 
-		if (USE_PRESENT_WAIT && vulkan_->Extensions().KHR_present_wait && vulkan_->GetPresentMode() == VK_PRESENT_MODE_FIFO_KHR) {
+		if (measurePresentTime_ && vulkan_->Extensions().KHR_present_wait && vulkan_->GetPresentMode() == VK_PRESENT_MODE_FIFO_KHR) {
 			INFO_LOG(G3D, "Starting Vulkan present wait thread");
 			presentWaitThread_ = std::thread(&VulkanRenderManager::PresentWaitThreadFunc, this);
 		}
@@ -552,13 +553,13 @@ void VulkanRenderManager::PresentWaitThreadFunc() {
 	while (run_) {
 		const uint64_t timeout = 1000000000ULL;  // 1 sec
 		if (VK_SUCCESS == vkWaitForPresentKHR(vulkan_->GetDevice(), vulkan_->GetSwapchain(), waitedId, timeout)) {
-			frameTimeData_[waitedId].actualPresent = time_now_d();
-			frameTimeData_[waitedId].waitCount++;
+			frameTimeHistory_[waitedId].actualPresent = time_now_d();
+			frameTimeHistory_[waitedId].waitCount++;
 			waitedId++;
 		} else {
 			// We caught up somehow, which is a bad sign (we should have blocked, right?). Maybe we should break out of the loop?
 			sleep_ms(1);
-			frameTimeData_[waitedId].waitCount++;
+			frameTimeHistory_[waitedId].waitCount++;
 		}
 		_dbg_assert_(waitedId <= frameIdGen_);
 	}
@@ -580,11 +581,11 @@ void VulkanRenderManager::PollPresentTiming() {
 			vkGetPastPresentationTimingGOOGLE(vulkan_->GetDevice(), vulkan_->GetSwapchain(), &count, timings);
 			for (uint32_t i = 0; i < count; i++) {
 				uint64_t presentId = timings[i].presentID;
-				frameTimeData_[presentId].actualPresent = from_time_raw(timings[i].actualPresentTime);
-				frameTimeData_[presentId].desiredPresentTime = from_time_raw(timings[i].desiredPresentTime);
-				frameTimeData_[presentId].earliestPresentTime = from_time_raw(timings[i].earliestPresentTime);
+				frameTimeHistory_[presentId].actualPresent = from_time_raw(timings[i].actualPresentTime);
+				frameTimeHistory_[presentId].desiredPresentTime = from_time_raw(timings[i].desiredPresentTime);
+				frameTimeHistory_[presentId].earliestPresentTime = from_time_raw(timings[i].earliestPresentTime);
 				double presentMargin = from_time_raw_relative(timings[i].presentMargin);
-				frameTimeData_[presentId].presentMargin = presentMargin;
+				frameTimeHistory_[presentId].presentMargin = presentMargin;
 			}
 			delete[] timings;
 		}
@@ -623,15 +624,15 @@ void VulkanRenderManager::BeginFrame(bool enableProfiling, bool enableLogProfile
 
 	int validBits = vulkan_->GetQueueFamilyProperties(vulkan_->GetGraphicsQueueFamilyIndex()).timestampValidBits;
 
+	FrameTimeData &frameTimeData = frameTimeHistory_.Add(frameId);
+	frameTimeData.frameId = frameId;
+	frameTimeData.frameBegin = frameBeginTime;
+	frameTimeData.afterFenceWait = time_now_d();
+
 	// Can't set this until after the fence.
 	frameData.profile.enabled = enableProfiling;
 	frameData.profile.timestampsEnabled = enableProfiling && validBits > 0;
 	frameData.frameId = frameId;
-
-	frameTimeData_[frameId] = {};
-	frameTimeData_[frameId].frameId = frameId;
-	frameTimeData_[frameId].frameBegin = frameBeginTime;
-	frameTimeData_[frameId].afterFenceWait = time_now_d();
 
 	uint64_t queryResults[MAX_TIMESTAMP_QUERIES];
 
@@ -712,6 +713,7 @@ VKRGraphicsPipeline *VulkanRenderManager::CreateGraphicsPipeline(VKRGraphicsPipe
 
 	if (!desc->vertexShader || !desc->fragmentShader) {
 		ERROR_LOG(G3D, "Can't create graphics pipeline with missing vs/ps: %p %p", desc->vertexShader, desc->fragmentShader);
+		delete pipeline;
 		return nullptr;
 	}
 
@@ -1391,7 +1393,7 @@ void VulkanRenderManager::Run(VKRRenderThreadTask &task) {
 	if (task.runType == VKRRunType::PRESENT) {
 		if (!frameData.skipSwap) {
 			VkResult res = frameData.QueuePresent(vulkan_, frameDataShared_);
-			frameTimeData_[frameData.frameId].queuePresent = time_now_d();
+			frameTimeHistory_[frameData.frameId].queuePresent = time_now_d();
 			if (res == VK_ERROR_OUT_OF_DATE_KHR) {
 				// We clearly didn't get this in vkAcquireNextImageKHR because of the skipSwap check above.
 				// Do the increment.
@@ -1414,8 +1416,8 @@ void VulkanRenderManager::Run(VKRRenderThreadTask &task) {
 
 	_dbg_assert_(!frameData.hasPresentCommands);
 
-	if (!frameTimeData_[frameData.frameId].firstSubmit) {
-		frameTimeData_[frameData.frameId].firstSubmit = time_now_d();
+	if (!frameTimeHistory_[frameData.frameId].firstSubmit) {
+		frameTimeHistory_[frameData.frameId].firstSubmit = time_now_d();
 	}
 	frameData.SubmitPending(vulkan_, FrameSubmitType::Pending, frameDataShared_);
 

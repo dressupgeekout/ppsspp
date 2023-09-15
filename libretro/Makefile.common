@@ -667,6 +667,7 @@ SOURCES_CXX += \
 	       $(COREDIR)/HW/SasReverb.cpp \
 	       $(COREDIR)/HW/StereoResampler.cpp \
 	       $(COREDIR)/Compatibility.cpp \
+	       $(COREDIR)/FrameTiming.cpp \
 	       $(COREDIR)/Loaders.cpp \
 	       $(COREDIR)/MIPS/JitCommon/JitCommon.cpp \
 	       $(COREDIR)/MIPS/JitCommon/JitState.cpp \
@@ -756,6 +757,15 @@ ifeq ($(WITH_DYNAREC),1)
 		     $(COREDIR)/MIPS/ARM64/Arm64Jit.cpp \
 		     $(COREDIR)/MIPS/ARM64/Arm64RegCache.cpp \
 		     $(COREDIR)/MIPS/ARM64/Arm64RegCacheFPU.cpp \
+		     $(COREDIR)/MIPS/ARM64/Arm64IRAsm.cpp \
+		     $(COREDIR)/MIPS/ARM64/Arm64IRCompALU.cpp \
+		     $(COREDIR)/MIPS/ARM64/Arm64IRCompBranch.cpp \
+		     $(COREDIR)/MIPS/ARM64/Arm64IRCompFPU.cpp \
+		     $(COREDIR)/MIPS/ARM64/Arm64IRCompLoadStore.cpp \
+		     $(COREDIR)/MIPS/ARM64/Arm64IRCompSystem.cpp \
+		     $(COREDIR)/MIPS/ARM64/Arm64IRCompVec.cpp \
+		     $(COREDIR)/MIPS/ARM64/Arm64IRJit.cpp \
+		     $(COREDIR)/MIPS/ARM64/Arm64IRRegCache.cpp \
 		     $(COREDIR)/Util/DisArm64.cpp \
 		     $(GPUCOMMONDIR)/VertexDecoderArm64.cpp
 
@@ -801,6 +811,15 @@ ifeq ($(WITH_DYNAREC),1)
 						$(COREDIR)/MIPS/x86/JitSafeMem.cpp \
 						$(COREDIR)/MIPS/x86/RegCache.cpp \
 						$(COREDIR)/MIPS/x86/RegCacheFPU.cpp \
+						$(COREDIR)/MIPS/x86/X64IRAsm.cpp \
+						$(COREDIR)/MIPS/x86/X64IRCompALU.cpp \
+						$(COREDIR)/MIPS/x86/X64IRCompBranch.cpp \
+						$(COREDIR)/MIPS/x86/X64IRCompFPU.cpp \
+						$(COREDIR)/MIPS/x86/X64IRCompLoadStore.cpp \
+						$(COREDIR)/MIPS/x86/X64IRCompSystem.cpp \
+						$(COREDIR)/MIPS/x86/X64IRCompVec.cpp \
+						$(COREDIR)/MIPS/x86/X64IRJit.cpp \
+						$(COREDIR)/MIPS/x86/X64IRRegCache.cpp \
 						$(GPUDIR)/Common/VertexDecoderX86.cpp
    endif
 endif

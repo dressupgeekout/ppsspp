@@ -35,8 +35,9 @@
 #include "Core/MIPS/MIPSInt.h"
 #include "Core/MIPS/MIPSTables.h"
 #include "Core/MIPS/IR/IRRegCache.h"
-#include "Core/MIPS/IR/IRJit.h"
 #include "Core/MIPS/IR/IRInterpreter.h"
+#include "Core/MIPS/IR/IRJit.h"
+#include "Core/MIPS/IR/IRNativeCommon.h"
 #include "Core/MIPS/JitCommon/JitCommon.h"
 #include "Core/Reporting.h"
 
@@ -49,9 +50,20 @@ IRJit::IRJit(MIPSState *mipsState) : frontend_(mipsState->HasDefaultPrefix()), m
 
 	IROptions opts{};
 	opts.disableFlags = g_Config.uJitDisableFlags;
-	// Assume that RISC-V always has very slow unaligned memory accesses.
-#if !PPSSPP_ARCH(RISCV64)
+#if PPSSPP_ARCH(RISCV64)
+	// Assume RISC-V always has very slow unaligned memory accesses.
+	opts.unalignedLoadStore = false;
+	opts.unalignedLoadStoreVec4 = true;
+	opts.preferVec4 = cpu_info.RiscV_V;
+#elif PPSSPP_ARCH(ARM)
 	opts.unalignedLoadStore = (opts.disableFlags & (uint32_t)JitDisable::LSU_UNALIGNED) == 0;
+	opts.unalignedLoadStoreVec4 = true;
+	opts.preferVec4 = cpu_info.bASIMD || cpu_info.bNEON;
+#else
+	opts.unalignedLoadStore = (opts.disableFlags & (uint32_t)JitDisable::LSU_UNALIGNED) == 0;
+	// TODO: Could allow on x86 pretty easily...
+	opts.unalignedLoadStoreVec4 = false;
+	opts.preferVec4 = true;
 #endif
 	frontend_.SetOptions(opts);
 }
@@ -72,7 +84,12 @@ void IRJit::ClearCache() {
 }
 
 void IRJit::InvalidateCacheAt(u32 em_address, int length) {
-	blocks_.InvalidateICache(em_address, length);
+	std::vector<int> numbers = blocks_.FindInvalidatedBlockNumbers(em_address, length);
+	for (int block_num : numbers) {
+		auto block = blocks_.GetBlock(block_num);
+		int cookie = block->GetTargetOffset() < 0 ? block_num : block->GetTargetOffset();
+		block->Destroy(cookie);
+	}
 }
 
 void IRJit::Compile(u32 em_address) {
@@ -88,6 +105,7 @@ void IRJit::Compile(u32 em_address) {
 			b->Finalize(cookie);
 			if (b->IsValid()) {
 				// Success, we're done.
+				FinalizeTargetBlock(b, block_num);
 				return;
 			}
 		}
@@ -135,6 +153,8 @@ bool IRJit::CompileBlock(u32 em_address, std::vector<IRInst> &instructions, u32 
 		return false;
 	// Overwrites the first instruction, and also updates stats.
 	blocks_.FinalizeBlock(block_num, preload);
+	if (!preload)
+		FinalizeTargetBlock(b, block_num);
 
 	return true;
 }
@@ -148,6 +168,7 @@ void IRJit::CompileFunction(u32 start_address, u32 length) {
 	// We may go up and down from branches, so track all block starts done here.
 	std::set<u32> doneAddresses;
 	std::vector<u32> pendingAddresses;
+	pendingAddresses.reserve(16);
 	pendingAddresses.push_back(start_address);
 	while (!pendingAddresses.empty()) {
 		u32 em_address = pendingAddresses.back();
@@ -271,10 +292,11 @@ void IRBlockCache::Clear() {
 	byPage_.clear();
 }
 
-void IRBlockCache::InvalidateICache(u32 address, u32 length) {
+std::vector<int> IRBlockCache::FindInvalidatedBlockNumbers(u32 address, u32 length) {
 	u32 startPage = AddressToPage(address);
 	u32 endPage = AddressToPage(address + length);
 
+	std::vector<int> found;
 	for (u32 page = startPage; page <= endPage; ++page) {
 		const auto iter = byPage_.find(page);
 		if (iter == byPage_.end())
@@ -284,11 +306,12 @@ void IRBlockCache::InvalidateICache(u32 address, u32 length) {
 		for (int i : blocksInPage) {
 			if (blocks_[i].OverlapsRange(address, length)) {
 				// Not removing from the page, hopefully doesn't build up with small recompiles.
-				int cookie = blocks_[i].GetTargetOffset() < 0 ? i : blocks_[i].GetTargetOffset();
-				blocks_[i].Destroy(cookie);
+				found.push_back(i);
 			}
 		}
 	}
+
+	return found;
 }
 
 void IRBlockCache::FinalizeBlock(int i, bool preload) {
@@ -321,10 +344,7 @@ int IRBlockCache::FindPreloadBlock(u32 em_address) {
 
 	const std::vector<int> &blocksInPage = iter->second;
 	for (int i : blocksInPage) {
-		u32 start, mipsBytes;
-		blocks_[i].GetRange(start, mipsBytes);
-
-		if (start == em_address) {
+		if (blocks_[i].GetOriginalStart() == em_address) {
 			if (blocks_[i].HashMatches()) {
 				return i;
 			}
@@ -446,9 +466,7 @@ int IRBlockCache::GetBlockNumberFromStartAddress(u32 em_address, bool realBlocks
 	const std::vector<int> &blocksInPage = iter->second;
 	int best = -1;
 	for (int i : blocksInPage) {
-		uint32_t start, size;
-		blocks_[i].GetRange(start, size);
-		if (start == em_address) {
+		if (blocks_[i].GetOriginalStart() == em_address) {
 			best = i;
 			if (blocks_[i].IsValid()) {
 				return i;

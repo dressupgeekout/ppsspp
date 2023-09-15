@@ -15,18 +15,26 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include <cstddef>
 #include "Core/MemMap.h"
 #include "Core/MIPS/MIPSTables.h"
 #include "Core/MIPS/RiscV/RiscVJit.h"
 #include "Core/MIPS/RiscV/RiscVRegCache.h"
+
+#include <algorithm>
+// for std::min
 
 namespace MIPSComp {
 
 using namespace RiscVGen;
 using namespace RiscVJitConstants;
 
-RiscVJitBackend::RiscVJitBackend(MIPSState *mipsState, JitOptions &jitopt)
-	: jo(jitopt), gpr(mipsState, &jo), fpr(mipsState, &jo) {
+// Needs space for a LI and J which might both be 32-bit offsets.
+static constexpr int MIN_BLOCK_NORMAL_LEN = 16;
+static constexpr int MIN_BLOCK_EXIT_LEN = 8;
+
+RiscVJitBackend::RiscVJitBackend(JitOptions &jitopt, IRBlockCache &blocks)
+	: IRNativeBackend(blocks), jo(jitopt), regs_(&jo) {
 	// Automatically disable incompatible options.
 	if (((intptr_t)Memory::base & 0x00000000FFFFFFFFUL) != 0) {
 		jo.enablePointerify = false;
@@ -37,8 +45,7 @@ RiscVJitBackend::RiscVJitBackend(MIPSState *mipsState, JitOptions &jitopt)
 	AllocCodeSpace(1024 * 1024 * 16);
 	SetAutoCompress(true);
 
-	gpr.Init(this);
-	fpr.Init(this);
+	regs_.Init(this);
 }
 
 RiscVJitBackend::~RiscVJitBackend() {
@@ -52,28 +59,42 @@ bool RiscVJitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) 
 	if (GetSpaceLeft() < 0x800)
 		return false;
 
+	BeginWrite(std::min(GetSpaceLeft(), (size_t)block->GetNumInstructions() * 32));
+
+	u32 startPC = block->GetOriginalStart();
+	bool wroteCheckedOffset = false;
+	if (jo.enableBlocklink && !jo.useBackJump) {
+		SetBlockCheckedOffset(block_num, (int)GetOffset(GetCodePointer()));
+		wroteCheckedOffset = true;
+
+		FixupBranch normalEntry = BGE(DOWNCOUNTREG, R_ZERO);
+		LI(SCRATCH1, startPC);
+		QuickJ(R_RA, outerLoopPCInSCRATCH1_);
+		SetJumpTarget(normalEntry);
+	}
+
 	// Don't worry, the codespace isn't large enough to overflow offsets.
-	block->SetTargetOffset((int)GetOffset(GetCodePointer()));
+	const u8 *blockStart = GetCodePointer();
+	block->SetTargetOffset((int)GetOffset(blockStart));
+	compilingBlockNum_ = block_num;
 
-	// TODO: Block linking, checked entries and such.
+	regs_.Start(block);
 
-	gpr.Start(block);
-	fpr.Start(block);
-
+	std::map<const u8 *, int> addresses;
 	for (int i = 0; i < block->GetNumInstructions(); ++i) {
 		const IRInst &inst = block->GetInstructions()[i];
-		gpr.SetIRIndex(i);
-		fpr.SetIRIndex(i);
+		regs_.SetIRIndex(i);
+		// TODO: This might be a little wasteful when compiling if we're not debugging jit...
+		addresses[GetCodePtr()] = i;
 
 		CompileIRInst(inst);
 
-		if (jo.Disabled(JitDisable::REGALLOC_GPR))
-			gpr.FlushAll();
-		if (jo.Disabled(JitDisable::REGALLOC_FPR))
-			fpr.FlushAll();
+		if (jo.Disabled(JitDisable::REGALLOC_GPR) || jo.Disabled(JitDisable::REGALLOC_FPR))
+			regs_.FlushAll(jo.Disabled(JitDisable::REGALLOC_GPR), jo.Disabled(JitDisable::REGALLOC_FPR));
 
 		// Safety check, in case we get a bunch of really large jit ops without a lot of branching.
 		if (GetSpaceLeft() < 0x800) {
+			compilingBlockNum_ = -1;
 			return false;
 		}
 	}
@@ -85,9 +106,108 @@ bool RiscVJitBackend::CompileBlock(IRBlock *block, int block_num, bool preload) 
 		QuickJ(R_RA, hooks_.crashHandler);
 	}
 
+	int len = (int)GetOffset(GetCodePointer()) - block->GetTargetOffset();
+	if (len < MIN_BLOCK_NORMAL_LEN) {
+		// We need at least 16 bytes to invalidate blocks with, but larger doesn't need to align.
+		ReserveCodeSpace(MIN_BLOCK_NORMAL_LEN - len);
+	}
+
+	if (!wroteCheckedOffset) {
+		// Always record this, even if block link disabled - it's used for size calc.
+		SetBlockCheckedOffset(block_num, (int)GetOffset(GetCodePointer()));
+	}
+
+	if (jo.enableBlocklink && jo.useBackJump) {
+		// Most blocks shouldn't be >= 4KB, so usually we can just BGE.
+		if (BInRange(blockStart)) {
+			BGE(DOWNCOUNTREG, R_ZERO, blockStart);
+		} else {
+			FixupBranch skip = BLT(DOWNCOUNTREG, R_ZERO);
+			J(blockStart);
+			SetJumpTarget(skip);
+		}
+		LI(SCRATCH1, startPC);
+		QuickJ(R_RA, outerLoopPCInSCRATCH1_);
+	}
+
+	if (logBlocks_ > 0) {
+		--logBlocks_;
+
+		INFO_LOG(JIT, "=============== RISCV (%08x, %d bytes) ===============", startPC, len);
+		for (const u8 *p = blockStart; p < GetCodePointer(); ) {
+			auto it = addresses.find(p);
+			if (it != addresses.end()) {
+				const IRInst &inst = block->GetInstructions()[it->second];
+
+				char temp[512];
+				DisassembleIR(temp, sizeof(temp), inst);
+				INFO_LOG(JIT, "IR: #%d %s", it->second, temp);
+			}
+
+			auto next = std::next(it);
+			const u8 *nextp = next == addresses.end() ? GetCodePointer() : next->first;
+
+#if PPSSPP_ARCH(RISCV64) || (PPSSPP_PLATFORM(WINDOWS) && !defined(__LIBRETRO__))
+			auto lines = DisassembleRV64(p, (int)(nextp - p));
+			for (const auto &line : lines)
+				INFO_LOG(JIT, "RV: %s", line.c_str());
+#endif
+			p = nextp;
+		}
+	}
+
+	EndWrite();
 	FlushIcache();
+	compilingBlockNum_ = -1;
 
 	return true;
+}
+
+void RiscVJitBackend::WriteConstExit(uint32_t pc) {
+	int block_num = blocks_.GetBlockNumberFromStartAddress(pc);
+	const IRNativeBlock *nativeBlock = GetNativeBlock(block_num);
+
+	int exitStart = (int)GetOffset(GetCodePointer());
+	if (block_num >= 0 && jo.enableBlocklink && nativeBlock && nativeBlock->checkedOffset != 0) {
+		QuickJ(SCRATCH1, GetBasePtr() + nativeBlock->checkedOffset);
+	} else {
+		LI(SCRATCH1, pc);
+		QuickJ(R_RA, dispatcherPCInSCRATCH1_);
+	}
+
+	if (jo.enableBlocklink) {
+		// In case of compression or early link, make sure it's large enough.
+		int len = (int)GetOffset(GetCodePointer()) - exitStart;
+		if (len < MIN_BLOCK_EXIT_LEN) {
+			ReserveCodeSpace(MIN_BLOCK_EXIT_LEN - len);
+			len = MIN_BLOCK_EXIT_LEN;
+		}
+
+		AddLinkableExit(compilingBlockNum_, pc, exitStart, len);
+	}
+}
+
+void RiscVJitBackend::OverwriteExit(int srcOffset, int len, int block_num) {
+	_dbg_assert_(len >= MIN_BLOCK_EXIT_LEN);
+
+	const IRNativeBlock *nativeBlock = GetNativeBlock(block_num);
+	if (nativeBlock) {
+		u8 *writable = GetWritablePtrFromCodePtr(GetBasePtr()) + srcOffset;
+		if (PlatformIsWXExclusive()) {
+			ProtectMemoryPages(writable, len, MEM_PROT_READ | MEM_PROT_WRITE);
+		}
+
+		RiscVEmitter emitter(GetBasePtr() + srcOffset, writable);
+		emitter.QuickJ(SCRATCH1, GetBasePtr() + nativeBlock->checkedOffset);
+		int bytesWritten = (int)(emitter.GetWritableCodePtr() - writable);
+		if (bytesWritten < len)
+			emitter.ReserveCodeSpace(len - bytesWritten);
+		emitter.FlushIcache();
+
+		if (PlatformIsWXExclusive()) {
+			ProtectMemoryPages(writable, 16, MEM_PROT_READ | MEM_PROT_EXEC);
+		}
+	}
 }
 
 void RiscVJitBackend::CompIR_Generic(IRInst inst) {
@@ -131,14 +251,16 @@ void RiscVJitBackend::CompIR_Interpret(IRInst inst) {
 }
 
 void RiscVJitBackend::FlushAll() {
-	gpr.FlushAll();
-	fpr.FlushAll();
+	regs_.FlushAll();
 }
 
 bool RiscVJitBackend::DescribeCodePtr(const u8 *ptr, std::string &name) const {
 	// Used in disassembly viewer.
+	// Don't use spaces; profilers get confused or truncate them.
 	if (ptr == dispatcherPCInSCRATCH1_) {
-		name = "dispatcher (PC in SCRATCH1)";
+		name = "dispatcherPCInSCRATCH1";
+	} else if (ptr == outerLoopPCInSCRATCH1_) {
+		name = "outerLoopPCInSCRATCH1";
 	} else if (ptr == dispatcherNoCheck_) {
 		name = "dispatcherNoCheck";
 	} else if (ptr == saveStaticRegisters_) {
@@ -147,6 +269,8 @@ bool RiscVJitBackend::DescribeCodePtr(const u8 *ptr, std::string &name) const {
 		name = "loadStaticRegisters";
 	} else if (ptr == applyRoundingMode_) {
 		name = "applyRoundingMode";
+	} else if (ptr >= GetBasePtr() && ptr < GetBasePtr() + jitStartOffset_) {
+		name = "fixedCode";
 	} else {
 		return IRNativeBackend::DescribeCodePtr(ptr, name);
 	}
@@ -156,6 +280,37 @@ bool RiscVJitBackend::DescribeCodePtr(const u8 *ptr, std::string &name) const {
 void RiscVJitBackend::ClearAllBlocks() {
 	ClearCodeSpace(jitStartOffset_);
 	FlushIcacheSection(region + jitStartOffset_, region + region_size - jitStartOffset_);
+	EraseAllLinks(-1);
+}
+
+void RiscVJitBackend::InvalidateBlock(IRBlock *block, int block_num) {
+	int offset = block->GetTargetOffset();
+	u8 *writable = GetWritablePtrFromCodePtr(GetBasePtr()) + offset;
+
+	// Overwrite the block with a jump to compile it again.
+	u32 pc = block->GetOriginalStart();
+	if (pc != 0) {
+		// Hopefully we always have at least 16 bytes, which should be all we need.
+		if (PlatformIsWXExclusive()) {
+			ProtectMemoryPages(writable, MIN_BLOCK_NORMAL_LEN, MEM_PROT_READ | MEM_PROT_WRITE);
+		}
+
+		RiscVEmitter emitter(GetBasePtr() + offset, writable);
+		// We sign extend to ensure it will fit in 32-bit and 8 bytes LI.
+		// TODO: May need to change if dispatcher doesn't reload PC.
+		emitter.LI(SCRATCH1, (int32_t)pc);
+		emitter.QuickJ(R_RA, dispatcherPCInSCRATCH1_);
+		int bytesWritten = (int)(emitter.GetWritableCodePtr() - writable);
+		if (bytesWritten < MIN_BLOCK_NORMAL_LEN)
+			emitter.ReserveCodeSpace(MIN_BLOCK_NORMAL_LEN - bytesWritten);
+		emitter.FlushIcache();
+
+		if (PlatformIsWXExclusive()) {
+			ProtectMemoryPages(writable, MIN_BLOCK_NORMAL_LEN, MEM_PROT_READ | MEM_PROT_EXEC);
+		}
+	}
+
+	EraseAllLinks(block_num);
 }
 
 void RiscVJitBackend::RestoreRoundingMode(bool force) {
@@ -200,15 +355,15 @@ void RiscVJitBackend::NormalizeSrc12(IRInst inst, RiscVReg *lhs, RiscVReg *rhs, 
 	*rhs = NormalizeR(inst.src2, allowOverlap ? 0 : inst.dest, rhsTempReg);
 }
 
-RiscVReg RiscVJitBackend::NormalizeR(IRRegIndex rs, IRRegIndex rd, RiscVReg tempReg) {
+RiscVReg RiscVJitBackend::NormalizeR(IRReg rs, IRReg rd, RiscVReg tempReg) {
 	// For proper compare, we must sign extend so they both match or don't match.
 	// But don't change pointers, in case one is SP (happens in LittleBigPlanet.)
-	if (gpr.IsImm(rs) && gpr.GetImm(rs) == 0) {
+	if (regs_.IsGPRImm(rs) && regs_.GetGPRImm(rs) == 0) {
 		return R_ZERO;
-	} else if (gpr.IsMappedAsPointer(rs) || rs == rd) {
-		return gpr.Normalize32(rs, tempReg);
+	} else if (regs_.IsGPRMappedAsPointer(rs) || rs == rd) {
+		return regs_.Normalize32(rs, tempReg);
 	} else {
-		return gpr.Normalize32(rs);
+		return regs_.Normalize32(rs);
 	}
 }
 

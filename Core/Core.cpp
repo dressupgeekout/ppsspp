@@ -216,20 +216,20 @@ void Core_RunLoop(GraphicsContext *ctx) {
 
 	bool menuThrottle = (GetUIState() != UISTATE_INGAME || !PSP_IsInited()) && GetUIState() != UISTATE_EXIT;
 
-	// In case it was pending, we're not in game anymore.
-	double startTime = time_now_d();
+	double startTime;
+	if (menuThrottle) {
+		startTime = time_now_d();
+	}
+
 	NativeFrame(ctx);
 
 	if (menuThrottle) {
 		// Simple throttling to not burn the GPU in the menu.
+		// TODO: This should move into NativeFrame. Also, it's only necessary in MAILBOX or IMMEDIATE presentation modes.
 		double diffTime = time_now_d() - startTime;
 		int sleepTime = (int)(1000.0 / refreshRate) - (int)(diffTime * 1000.0);
 		if (sleepTime > 0)
 			sleep_ms(sleepTime);
-	}
-
-	if (!windowHidden && !Core_IsStepping()) {
-		ctx->SwapBuffers();
 	}
 }
 
@@ -411,7 +411,7 @@ const char *ExecExceptionTypeAsString(ExecExceptionType type) {
 void Core_MemoryException(u32 address, u32 accessSize, u32 pc, MemoryExceptionType type) {
 	const char *desc = MemoryExceptionTypeAsString(type);
 	// In jit, we only flush PC when bIgnoreBadMemAccess is off.
-	if (g_Config.iCpuCore == (int)CPUCore::JIT && g_Config.bIgnoreBadMemAccess) {
+	if ((g_Config.iCpuCore == (int)CPUCore::JIT || g_Config.iCpuCore == (int)CPUCore::JIT_IR) && g_Config.bIgnoreBadMemAccess) {
 		WARN_LOG(MEMMAP, "%s: Invalid access at %08x (size %08x)", desc, address, accessSize);
 	} else {
 		WARN_LOG(MEMMAP, "%s: Invalid access at %08x (size %08x) PC %08x LR %08x", desc, address, accessSize, currentMIPS->pc, currentMIPS->r[MIPS_REG_RA]);
@@ -439,7 +439,7 @@ void Core_MemoryException(u32 address, u32 accessSize, u32 pc, MemoryExceptionTy
 void Core_MemoryExceptionInfo(u32 address, u32 accessSize, u32 pc, MemoryExceptionType type, std::string additionalInfo, bool forceReport) {
 	const char *desc = MemoryExceptionTypeAsString(type);
 	// In jit, we only flush PC when bIgnoreBadMemAccess is off.
-	if (g_Config.iCpuCore == (int)CPUCore::JIT && g_Config.bIgnoreBadMemAccess) {
+	if ((g_Config.iCpuCore == (int)CPUCore::JIT || g_Config.iCpuCore == (int)CPUCore::JIT_IR) && g_Config.bIgnoreBadMemAccess) {
 		WARN_LOG(MEMMAP, "%s: Invalid access at %08x (size %08x). %s", desc, address, accessSize, additionalInfo.c_str());
 	} else {
 		WARN_LOG(MEMMAP, "%s: Invalid access at %08x (size %08x) PC %08x LR %08x %s", desc, address, accessSize, currentMIPS->pc, currentMIPS->r[MIPS_REG_RA], additionalInfo.c_str());

@@ -319,7 +319,10 @@ void GameSettingsScreen::CreateGraphicsSettings(UI::ViewGroup *graphicsSettings)
 			max_res_temp = 4;  // At least allow 2x
 		int max_res = std::min(max_res_temp, (int)ARRAY_SIZE(deviceResolutions));
 		UI::PopupMultiChoice *hwscale = graphicsSettings->Add(new PopupMultiChoice(&g_Config.iAndroidHwScale, gr->T("Display Resolution (HW scaler)"), deviceResolutions, 0, max_res, I18NCat::GRAPHICS, screenManager()));
-		hwscale->OnChoice.Handle(this, &GameSettingsScreen::OnHwScaleChange);  // To refresh the display mode
+		hwscale->OnChoice.Add([](UI::EventParams &) {
+			System_RecreateActivity();
+			return UI::EVENT_DONE;
+		});
 	}
 #endif
 
@@ -335,13 +338,14 @@ void GameSettingsScreen::CreateGraphicsSettings(UI::ViewGroup *graphicsSettings)
 		}
 #endif
 
-#if !(PPSSPP_PLATFORM(ANDROID) || defined(USING_QT_UI) || PPSSPP_PLATFORM(UWP) || PPSSPP_PLATFORM(IOS))
+	// All backends support FIFO. Check if any immediate modes are supported, if so we can allow the user to choose.
+	if (draw->GetDeviceCaps().presentModesSupported & (Draw::PresentMode::IMMEDIATE | Draw::PresentMode::MAILBOX)) {
 		CheckBox *vSync = graphicsSettings->Add(new CheckBox(&g_Config.bVSync, gr->T("VSync")));
 		vSync->OnClick.Add([=](EventParams &e) {
 			NativeResized();
 			return UI::EVENT_CONTINUE;
 		});
-#endif
+	}
 
 #if PPSSPP_PLATFORM(ANDROID)
 		// Hide Immersive Mode on pre-kitkat Android
@@ -641,8 +645,10 @@ void GameSettingsScreen::CreateControlsSettings(UI::ViewGroup *controlsSettings)
 	controlsSettings->Add(new Choice(co->T("Control Mapping")))->OnClick.Handle(this, &GameSettingsScreen::OnControlMapping);
 	controlsSettings->Add(new Choice(co->T("Calibrate Analog Stick")))->OnClick.Handle(this, &GameSettingsScreen::OnCalibrateAnalogs);
 
-#if defined(USING_WIN_UI)
+#if defined(USING_WIN_UI) || (PPSSPP_PLATFORM(LINUX) && !PPSSPP_PLATFORM(ANDROID))
 	controlsSettings->Add(new CheckBox(&g_Config.bSystemControls, co->T("Enable standard shortcut keys")));
+#endif
+#if defined(USING_WIN_UI)
 	controlsSettings->Add(new CheckBox(&g_Config.bGamepadOnlyFocused, co->T("Ignore gamepads when not focused")));
 #endif
 
@@ -684,6 +690,10 @@ void GameSettingsScreen::CreateControlsSettings(UI::ViewGroup *controlsSettings)
 		CheckBox *hideStickBackground = controlsSettings->Add(new CheckBox(&g_Config.bHideStickBackground, co->T("Hide touch analog stick background circle")));
 		hideStickBackground->SetEnabledPtr(&g_Config.bShowTouchControls);
 
+		// Sticky D-pad.
+		CheckBox *stickyDpad = controlsSettings->Add(new CheckBox(&g_Config.bStickyTouchDPad, co->T("Sticky D-Pad (easier sweeping movements)")));
+		stickyDpad->SetEnabledPtr(&g_Config.bShowTouchControls);
+
 		// Re-centers itself to the touch location on touch-down.
 		CheckBox *floatingAnalog = controlsSettings->Add(new CheckBox(&g_Config.bAutoCenterTouchAnalog, co->T("Auto-centering analog stick")));
 		floatingAnalog->SetEnabledPtr(&g_Config.bShowTouchControls);
@@ -720,7 +730,7 @@ void GameSettingsScreen::CreateControlsSettings(UI::ViewGroup *controlsSettings)
 			settingInfo_->Show(co->T("AnalogLimiter Tip", "When the analog limiter button is pressed"), e.v);
 			return UI::EVENT_CONTINUE;
 		});
-		controlsSettings->Add(new PopupSliderChoice(&g_Config.iRapidFireInterval, 1, 10, 5, "Rapid fire interval", screenManager(), "frames"));
+		controlsSettings->Add(new PopupSliderChoice(&g_Config.iRapidFireInterval, 1, 10, 5, co->T("Rapid fire interval"), screenManager(), "frames"));
 #if defined(USING_WIN_UI) || defined(SDL)
 		controlsSettings->Add(new ItemHeader(co->T("Mouse", "Mouse settings")));
 		CheckBox *mouseControl = controlsSettings->Add(new CheckBox(&g_Config.bMouseControl, co->T("Use Mouse Control")));
@@ -884,11 +894,30 @@ void GameSettingsScreen::CreateToolsSettings(UI::ViewGroup *tools) {
 	auto ri = GetI18NCategory(I18NCat::REMOTEISO);
 
 	tools->Add(new ItemHeader(ms->T("Tools")));
+
+	auto retro = tools->Add(new Choice(sy->T("RetroAchievements")));
+	retro->OnClick.Add([=](UI::EventParams &) -> UI::EventReturn {
+		screenManager()->push(new RetroAchievementsSettingsScreen(gamePath_));
+		return UI::EVENT_DONE;
+	});
+	retro->SetIcon(ImageID("I_RETROACHIEVEMENTS_LOGO"));
 	// These were moved here so use the wrong translation objects, to avoid having to change all inis... This isn't a sustainable situation :P
-	tools->Add(new Choice(sa->T("Savedata Manager")))->OnClick.Handle(this, &GameSettingsScreen::OnSavedataManager);
-	tools->Add(new Choice(dev->T("System Information")))->OnClick.Handle(this, &GameSettingsScreen::OnSysInfo);
-	tools->Add(new Choice(sy->T("Developer Tools")))->OnClick.Handle(this, &GameSettingsScreen::OnDeveloperTools);
-	tools->Add(new Choice(ri->T("Remote disc streaming")))->OnClick.Handle(this, &GameSettingsScreen::OnRemoteISO);
+	tools->Add(new Choice(sa->T("Savedata Manager")))->OnClick.Add([=](UI::EventParams &) {
+		screenManager()->push(new SavedataScreen(gamePath_));
+		return UI::EVENT_DONE;
+	});
+	tools->Add(new Choice(dev->T("System Information")))->OnClick.Add([=](UI::EventParams &) {
+		screenManager()->push(new SystemInfoScreen(gamePath_));
+		return UI::EVENT_DONE;
+	});
+	tools->Add(new Choice(sy->T("Developer Tools")))->OnClick.Add([=](UI::EventParams &) {
+		screenManager()->push(new DeveloperToolsScreen(gamePath_));
+		return UI::EVENT_DONE;
+	});
+	tools->Add(new Choice(ri->T("Remote disc streaming")))->OnClick.Add([=](UI::EventParams &) {
+		screenManager()->push(new RemoteISOScreen(gamePath_));
+		return UI::EVENT_DONE;
+	});
 }
 
 void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {
@@ -899,15 +928,6 @@ void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {
 	auto vr = GetI18NCategory(I18NCat::VR);
 	auto th = GetI18NCategory(I18NCat::THEMES);
 	auto psps = GetI18NCategory(I18NCat::PSPSETTINGS);  // TODO: Should move more into this section.
-
-	systemSettings->Add(new ItemHeader(sy->T("RetroAchievements")));
-	auto retro = systemSettings->Add(new Choice(sy->T("RetroAchievements")));
-
-	retro->OnClick.Add([&](UI::EventParams &) -> UI::EventReturn {
-		screenManager()->push(new RetroAchievementsSettingsScreen(gamePath_));
-		return UI::EVENT_DONE;
-	});
-	retro->SetIcon(ImageID("I_RETROACHIEVEMENTS_LOGO"));
 
 	systemSettings->Add(new ItemHeader(sy->T("UI")));
 
@@ -976,7 +996,7 @@ void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {
 
 	if (System_GetPropertyBool(SYSPROP_HAS_OPEN_DIRECTORY)) {
 		systemSettings->Add(new Choice(sy->T("Show Memory Stick folder")))->OnClick.Add([](UI::EventParams &p) {
-			System_ShowFileInFolder(File::ResolvePath(g_Config.memStickDirectory.ToString()).c_str());
+			System_ShowFileInFolder(g_Config.memStickDirectory);
 			return UI::EVENT_DONE;
 		});
 	}
@@ -1002,7 +1022,13 @@ void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {
 			systemSettings->Add(new InfoItem(sy->T("USB"), usbPath))->SetChoiceStyle(true);
 		}
 	}
-#elif defined(_WIN32) && !PPSSPP_PLATFORM(UWP)
+#elif defined(_WIN32)
+#if PPSSPP_PLATFORM(UWP)
+	memstickDisplay_ = g_Config.memStickDirectory.ToVisualString();
+	auto memstickPath = systemSettings->Add(new ChoiceWithValueDisplay(&memstickDisplay_, sy->T("Memory Stick folder", "Memory Stick folder"), I18NCat::NONE));
+	memstickPath->SetEnabled(!PSP_IsInited());
+	memstickPath->OnClick.Handle(this, &GameSettingsScreen::OnChangeMemStickDir);
+#else
 	SavePathInMyDocumentChoice = systemSettings->Add(new CheckBox(&installed_, sy->T("Save path in My Documents", "Save path in My Documents")));
 	SavePathInMyDocumentChoice->SetEnabled(!PSP_IsInited());
 	SavePathInMyDocumentChoice->OnClick.Handle(this, &GameSettingsScreen::OnSavePathMydoc);
@@ -1045,6 +1071,7 @@ void GameSettingsScreen::CreateSystemSettings(UI::ViewGroup *systemSettings) {
 			SavePathInMyDocumentChoice->SetEnabled(false);
 		}
 	}
+#endif
 #endif
 	systemSettings->Add(new CheckBox(&g_Config.bMemStickInserted, sy->T("Memory Stick inserted")));
 	UI::PopupSliderChoice *sizeChoice = systemSettings->Add(new PopupSliderChoice(&g_Config.iMemStickSizeGB, 1, 32, 16, sy->T("Memory Stick size", "Memory Stick size"), screenManager(), "GB"));
@@ -1325,11 +1352,6 @@ UI::EventReturn GameSettingsScreen::OnResolutionChange(UI::EventParams &e) {
 	return UI::EVENT_DONE;
 }
 
-UI::EventReturn GameSettingsScreen::OnHwScaleChange(UI::EventParams &e) {
-	System_RecreateActivity();
-	return UI::EVENT_DONE;
-}
-
 void GameSettingsScreen::onFinish(DialogResult result) {
 	Reporting::Enable(enableReports_, "report.ppsspp.org");
 	Reporting::UpdateConfig();
@@ -1570,16 +1592,6 @@ UI::EventReturn GameSettingsScreen::OnTextureShaderChange(UI::EventParams &e) {
 	return UI::EVENT_DONE;
 }
 
-UI::EventReturn GameSettingsScreen::OnDeveloperTools(UI::EventParams &e) {
-	screenManager()->push(new DeveloperToolsScreen(gamePath_));
-	return UI::EVENT_DONE;
-}
-
-UI::EventReturn GameSettingsScreen::OnRemoteISO(UI::EventParams &e) {
-	screenManager()->push(new RemoteISOScreen(gamePath_));
-	return UI::EVENT_DONE;
-}
-
 UI::EventReturn GameSettingsScreen::OnControlMapping(UI::EventParams &e) {
 	screenManager()->push(new ControlMappingScreen(gamePath_));
 	return UI::EVENT_DONE;
@@ -1600,17 +1612,6 @@ UI::EventReturn GameSettingsScreen::OnTiltCustomize(UI::EventParams &e) {
 	return UI::EVENT_DONE;
 };
 
-UI::EventReturn GameSettingsScreen::OnSavedataManager(UI::EventParams &e) {
-	auto saveData = new SavedataScreen(gamePath_);
-	screenManager()->push(saveData);
-	return UI::EVENT_DONE;
-}
-
-UI::EventReturn GameSettingsScreen::OnSysInfo(UI::EventParams &e) {
-	screenManager()->push(new SystemInfoScreen(gamePath_));
-	return UI::EVENT_DONE;
-}
-
 void DeveloperToolsScreen::CreateViews() {
 	using namespace UI;
 	root_ = new LinearLayout(ORIENT_VERTICAL, new LayoutParams(FILL_PARENT, FILL_PARENT));
@@ -1629,13 +1630,33 @@ void DeveloperToolsScreen::CreateViews() {
 
 	LinearLayout *list = settingsScroll->Add(new LinearLayoutList(ORIENT_VERTICAL, new LinearLayoutParams(1.0f)));
 	list->SetSpacing(0);
+
+	list->Add(new ItemHeader(dev->T("Texture Replacement")));
+	list->Add(new CheckBox(&g_Config.bSaveNewTextures, dev->T("Save new textures")));
+	list->Add(new CheckBox(&g_Config.bReplaceTextures, dev->T("Replace textures")));
+
+	Choice *createTextureIni = list->Add(new Choice(dev->T("Create/Open textures.ini file for current game")));
+	createTextureIni->OnClick.Handle(this, &DeveloperToolsScreen::OnOpenTexturesIniFile);
+	createTextureIni->SetEnabledFunc([&] {
+		if (!PSP_IsInited())
+			return false;
+
+		// Disable the choice to Open/Create if the textures.ini file already exists, and we can't open it due to platform support limitations.
+		if (!System_GetPropertyBool(SYSPROP_SUPPORTS_OPEN_FILE_IN_EDITOR)) {
+			if (hasTexturesIni_ == HasIni::MAYBE)
+				hasTexturesIni_ = TextureReplacer::IniExists(g_paramSFO.GetDiscID()) ? HasIni::YES : HasIni::NO;
+			return hasTexturesIni_ != HasIni::YES;
+		}
+		return true;
+	});
+
 	list->Add(new ItemHeader(sy->T("General")));
 
 	bool canUseJit = true;
 	// iOS can now use JIT on all modes, apparently.
 	// The bool may come in handy for future non-jit platforms though (UWP XB1?)
 
-	static const char *cpuCores[] = {"Interpreter", "Dynarec (JIT)", "IR Interpreter"};
+	static const char *cpuCores[] = {"Interpreter", "Dynarec (JIT)", "IR Interpreter", "JIT Using IR"};
 	PopupMultiChoice *core = list->Add(new PopupMultiChoice(&g_Config.iCpuCore, gr->T("CPU Core"), cpuCores, 0, ARRAY_SIZE(cpuCores), I18NCat::SYSTEM, screenManager()));
 	core->OnChoice.Handle(this, &DeveloperToolsScreen::OnJitAffectingSetting);
 	core->OnChoice.Add([](UI::EventParams &) {
@@ -1644,7 +1665,12 @@ void DeveloperToolsScreen::CreateViews() {
 	});
 	if (!canUseJit) {
 		core->HideChoice(1);
+		core->HideChoice(3);
 	}
+	// TODO: Enable on more architectures.
+#if !PPSSPP_ARCH(X86) && !PPSSPP_ARCH(AMD64)
+	core->HideChoice(3);
+#endif
 
 	list->Add(new Choice(dev->T("JIT debug tools")))->OnClick.Handle(this, &DeveloperToolsScreen::OnJitDebugTools);
 	list->Add(new CheckBox(&g_Config.bShowDeveloperMenu, dev->T("Show Developer Menu")));
@@ -1689,26 +1715,21 @@ void DeveloperToolsScreen::CreateViews() {
 	if (GetGPUBackend() == GPUBackend::VULKAN) {
 		list->Add(new CheckBox(&g_Config.bGpuLogProfiler, dev->T("GPU log profiler")));
 	}
-	list->Add(new ItemHeader(dev->T("Texture Replacement")));
-	list->Add(new CheckBox(&g_Config.bSaveNewTextures, dev->T("Save new textures")));
-	list->Add(new CheckBox(&g_Config.bReplaceTextures, dev->T("Replace textures")));
-
-	Choice *createTextureIni = list->Add(new Choice(dev->T("Create/Open textures.ini file for current game")));
-	createTextureIni->OnClick.Handle(this, &DeveloperToolsScreen::OnOpenTexturesIniFile);
-	createTextureIni->SetEnabledFunc([&] {
-		if (!PSP_IsInited())
-			return false;
-
-		// Disable the choice to Open/Create if the textures.ini file already exists, and we can't open it due to platform support limitations.
-		if (!System_GetPropertyBool(SYSPROP_SUPPORTS_OPEN_FILE_IN_EDITOR)) {
-			if (hasTexturesIni_ == HasIni::MAYBE)
-				hasTexturesIni_ = TextureReplacer::IniExists(g_paramSFO.GetDiscID()) ? HasIni::YES : HasIni::NO;
-			return hasTexturesIni_ != HasIni::YES;
-		}
-		return true;
-	});
 
 	Draw::DrawContext *draw = screenManager()->getDrawContext();
+
+	list->Add(new ItemHeader(dev->T("Ubershaders")));
+	if (draw->GetShaderLanguageDesc().bitwiseOps && !draw->GetBugs().Has(Draw::Bugs::UNIFORM_INDEXING_BROKEN)) {
+		// If the above if fails, the checkbox is redundant since it'll be force disabled anyway.
+		list->Add(new CheckBox(&g_Config.bUberShaderVertex, dev->T("Vertex")));
+	}
+#if !PPSSPP_PLATFORM(UWP)
+	if (g_Config.iGPUBackend != (int)GPUBackend::OPENGL || gl_extensions.GLES3) {
+#else
+	{
+#endif
+		list->Add(new CheckBox(&g_Config.bUberShaderFragment, dev->T("Fragment")));
+	}
 
 	// Experimental, will move to main graphics settings later.
 	bool multiViewSupported = draw->GetDeviceCaps().multiViewSupported;
@@ -1717,7 +1738,7 @@ void DeveloperToolsScreen::CreateViews() {
 		return g_Config.bStereoRendering && multiViewSupported;
 	};
 
-	if (draw->GetDeviceCaps().multiViewSupported) {
+	if (multiViewSupported) {
 		list->Add(new ItemHeader(gr->T("Stereo rendering")));
 		list->Add(new CheckBox(&g_Config.bStereoRendering, gr->T("Stereo rendering")));
 		std::vector<std::string> stereoShaderNames;
@@ -2121,6 +2142,10 @@ void GestureMappingScreen::CreateViews() {
 
 	vert->Add(new ItemHeader(co->T("Double tap")));
 	vert->Add(new PopupMultiChoice(&g_Config.iDoubleTapGesture, mc->T("Double tap button"), gestureButton, 0, ARRAY_SIZE(gestureButton), I18NCat::MAPPABLECONTROLS, screenManager()))->SetEnabledPtr(&g_Config.bGestureControlEnabled);
+
+	vert->Add(new ItemHeader(co->T("Analog Stick")));
+	vert->Add(new CheckBox(&g_Config.bAnalogGesture, co->T("Enable analog stick gesture")));
+	vert->Add(new PopupSliderChoiceFloat(&g_Config.fAnalogGestureSensibility, 0.01f, 5.0f, 1.0f, co->T("Sensitivity"), 0.01f, screenManager(), "x"))->SetEnabledPtr(&g_Config.bAnalogGesture);
 }
 
 RestoreSettingsScreen::RestoreSettingsScreen(const char *title)

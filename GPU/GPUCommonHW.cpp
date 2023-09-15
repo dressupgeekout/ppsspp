@@ -447,6 +447,8 @@ void GPUCommonHW::DeviceLost() {
 // Call at the start of the GPU implementation's DeviceRestore
 void GPUCommonHW::DeviceRestore(Draw::DrawContext *draw) {
 	draw_ = draw;
+	displayResized_ = true;  // re-check display bounds.
+	renderResized_ = true;
 	framebufferManager_->DeviceRestore(draw_);
 	textureCache_->DeviceRestore(draw_);
 	shaderManager_->DeviceRestore(draw_);
@@ -611,7 +613,7 @@ u32 GPUCommonHW::CheckGPUFeatures() const {
 		features |= GPU_USE_FRAMEBUFFER_FETCH;
 	}
 
-	if (draw_->GetShaderLanguageDesc().bitwiseOps) {
+	if (draw_->GetShaderLanguageDesc().bitwiseOps && g_Config.bUberShaderVertex) {
 		features |= GPU_USE_LIGHT_UBERSHADER;
 	}
 
@@ -622,6 +624,11 @@ u32 GPUCommonHW::CheckGPUFeatures() const {
 	// Even without depth clamp, force accurate depth on for some games that break without it.
 	if (PSP_CoreParameter().compat.flags().DepthRangeHack) {
 		features |= GPU_USE_ACCURATE_DEPTH;
+	}
+
+	// Some backends will turn this off again in the calling function.
+	if (g_Config.bUberShaderFragment) {
+		features |= GPU_USE_FRAGMENT_UBERSHADER;
 	}
 
 	return features;

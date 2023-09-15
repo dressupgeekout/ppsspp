@@ -1079,6 +1079,17 @@ TextEdit::TextEdit(const std::string &text, const std::string &title, const std:
 	caret_ = (int)text_.size();
 }
 
+void TextEdit::FocusChanged(int focusFlags) {
+#if PPSSPP_PLATFORM(UWP)
+	if (focusFlags == FF_GOTFOCUS) {
+		System_NotifyUIState("text_gotfocus");
+	}
+	else {
+		System_NotifyUIState("text_lostfocus");
+	}
+#endif
+}
+
 void TextEdit::Draw(UIContext &dc) {
 	dc.PushScissor(bounds_);
 	dc.SetFontStyle(dc.theme->uiFont);
@@ -1214,7 +1225,7 @@ bool TextEdit::Key(const KeyInput &input) {
 			switch (input.keyCode) {
 			case NKCODE_C:
 				// Just copy the entire text contents, until we get selection support.
-				System_CopyStringToClipboard(text_.c_str());
+				System_CopyStringToClipboard(text_);
 				break;
 			case NKCODE_V:
 				{

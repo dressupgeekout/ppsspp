@@ -19,11 +19,14 @@
 
 #include "Core/MIPS/IR/IRInst.h"
 
-bool IRReadsFromFPR(const IRInst &inst, int reg, bool directly = false);
-bool IRReadsFromGPR(const IRInst &inst, int reg, bool directly = false);
+bool IRReadsFromFPR(const IRInst &inst, int reg, bool *directly = nullptr);
+bool IRReadsFromGPR(const IRInst &inst, int reg, bool *directly = nullptr);
 bool IRWritesToGPR(const IRInst &inst, int reg);
 bool IRWritesToFPR(const IRInst &inst, int reg);
 int IRDestGPR(const IRInst &inst);
+int IRDestFPRs(const IRInst &inst, IRReg regs[4]);
+int IRReadsFromGPRs(const IRInst &inst, IRReg regs[4]);
+int IRReadsFromFPRs(const IRInst &inst, IRReg regs[16]);
 
 struct IRSituation {
 	int lookaheadCount;
