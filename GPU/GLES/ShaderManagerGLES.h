@@ -141,7 +141,6 @@ public:
 	~Shader();
 	GLRShader *shader;
 
-	bool Failed() const { return failed_; }
 	bool UseHWTransform() const { return useHWTransform_; }  // only relevant for vtx shaders
 
 	std::string GetShaderString(DebugShaderStringType type, ShaderID id) const;
@@ -152,7 +151,6 @@ public:
 private:
 	GLRenderManager *render_;
 	std::string source_;
-	bool failed_ = false;
 	bool useHWTransform_;
 	bool isFragment_;
 	uint32_t attrMask_; // only used in vertex shaders
@@ -174,7 +172,6 @@ public:
 	void DeviceLost() override;
 	void DeviceRestore(Draw::DrawContext *draw) override;
 
-	void DirtyShader();
 	void DirtyLastShader() override;
 
 	int GetNumVertexShaders() const { return (int)vsCache_.size(); }

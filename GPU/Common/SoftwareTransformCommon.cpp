@@ -859,6 +859,7 @@ void SoftwareTransform::ExpandLines(int vertexCount, int &maxIndex, u16 *&inds, 
 	inds = newInds;
 }
 
+
 void SoftwareTransform::ExpandPoints(int vertexCount, int &maxIndex, u16 *&inds, const TransformedVertex *transformed, TransformedVertex *transformedExpanded, int &numTrans, bool throughmode) {
 	numTrans = 0;
 	TransformedVertex *trans = &transformedExpanded[0];
