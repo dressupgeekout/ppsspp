@@ -5,6 +5,7 @@ set -ex
 export PKG_CONFIG_PATH=${PKG_CONFIG_PATH}:/usr/pkg/lib/ffmpeg3/pkgconfig
 
 cmake ../ -GNinja \
+  -DX86_64=ON \
   -DUSE_DISCORD=OFF \
   -DUSE_SYSTEM_FFMPEG=ON \
   -DUSE_SYSTEM_LIBPNG=ON \
